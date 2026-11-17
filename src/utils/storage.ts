@@ -24,7 +24,7 @@ export function loadGameStats(): AllGameStats {
 }
 
 export function recordGameOutcome(
-  game: Exclude<GameTab, 'LOBBY'>,
+  game: Exclude<GameTab, 'LOBBY' | 'ONLINE'>,
   outcome: 'WIN' | 'LOSS' | 'DRAW'
 ): AllGameStats {
   const current = loadGameStats();

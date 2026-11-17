@@ -246,6 +246,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
   const [moveLogs, setMoveLogs] = useState<MoveLogEntry[]>([]);
   const [hintCoord, setHintCoord] = useState<Coord | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [stoneEffect, setStoneEffect] = useState<{ r: number; c: number; key: number } | null>(null);
 
   const aiTimeoutRef = useRef<number | null>(null);
 
@@ -268,6 +269,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
     setHistory([]);
     setMoveLogs([]);
     setHintCoord(null);
+    setStoneEffect(null);
     setElapsedSeconds(0);
     soundFX.playSelect();
   }, []);
@@ -283,6 +285,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
       setHistory((prev) => [...prev, { grid: cloneGrid(grid), lastMove, turn }]);
       setGrid(nextGrid);
       setLastMove({ r, c });
+      setStoneEffect({ r, c, key: Date.now() + Math.random() });
       setHintCoord(null);
 
       const colLabel = String.fromCharCode(65 + c);
@@ -304,7 +307,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
       if (winCoords) {
         setWinningLine(winCoords);
         setWinner(turn);
-        soundFX.playVictory();
+        soundFX.playGomokuWin();
         if (playMode === 'PVE') {
           onRecordResult(turn === 1 ? 'WIN' : 'LOSS');
         } else {
@@ -321,7 +324,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
         return;
       }
 
-      soundFX.playMove();
+      soundFX.playGomokuPlace();
       setTurn(turn === 1 ? 2 : 1);
     },
     [grid, lastMove, onRecordResult, playMode, turn, winner]
@@ -355,6 +358,7 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
     setHistory((prev) => prev.slice(0, targetIndex));
     setMoveLogs((prev) => prev.slice(stepsToPop));
     setHintCoord(null);
+    setStoneEffect(null);
     soundFX.playSelect();
   };
 
@@ -555,6 +559,8 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
                     winner === null &&
                     !(playMode === 'PVE' && turn === 2);
 
+                  const isFxTarget = stoneEffect?.r === r && stoneEffect?.c === c;
+
                   return (
                     <button
                       key={`${r}-${c}`}
@@ -568,14 +574,27 @@ export const GomokuGame: React.FC<GomokuGameProps> = ({
                       aria-label={`落子位置 ${String.fromCharCode(65 + c)}${15 - r}`}
                       className="relative flex items-center justify-center w-full h-full focus:outline-none cursor-pointer group"
                     >
+                      {/* Concentric ink/jade ripple on new placement */}
+                      {cell !== 0 && isFxTarget && stoneEffect && (
+                        <span
+                          key={`g-rip-${stoneEffect.key}`}
+                          className={`absolute inset-0 rounded-full border-2 pointer-events-none animate-gomoku-ripple ${
+                            cell === 1 ? 'border-[#3E2723]/75' : 'border-[#0F766E]/75'
+                          }`}
+                        />
+                      )}
+
                       {/* Placed Black or White Stone */}
                       {cell !== 0 && (
                         <div
+                          key={isFxTarget && stoneEffect ? `g-st-${stoneEffect.key}` : 'g-st'}
                           className={`w-[84%] h-[84%] rounded-full transition-transform duration-150 flex items-center justify-center ${
                             cell === 1
                               ? 'bg-radial-[at_32%_30%] from-neutral-600 via-neutral-900 to-black shadow-[0_3px_6px_rgba(0,0,0,0.55)]'
                               : 'bg-radial-[at_32%_30%] from-white via-stone-100 to-stone-300 border border-stone-400/70 shadow-[0_3px_6px_rgba(45,27,18,0.4)]'
-                          } ${isWinStone ? 'ring-3 ring-[#B91C1C] scale-105' : ''}`}
+                          } ${isFxTarget ? 'animate-gomoku-drop' : ''} ${
+                            isWinStone ? 'ring-3 ring-[#B91C1C] scale-105 animate-gomoku-win-glow' : ''
+                          }`}
                         >
                           {/* Last move marker */}
                           {isLast && (

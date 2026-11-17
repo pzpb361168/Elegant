@@ -1,10 +1,11 @@
 import React from 'react';
 import { AllGameStats, GameTab, JunqiSubMode, PlayMode } from '../types/game';
-import { ArrowRight, BookOpen, RotateCcw } from 'lucide-react';
+import { ArrowRight, BookOpen, RotateCcw, Wifi } from 'lucide-react';
 
 interface LobbyViewProps {
   stats: AllGameStats;
-  onSelectGame: (game: Exclude<GameTab, 'LOBBY'>, mode?: PlayMode, junqiSub?: JunqiSubMode) => void;
+  onSelectGame: (game: Exclude<GameTab, 'LOBBY' | 'ONLINE'>, mode?: PlayMode, junqiSub?: JunqiSubMode) => void;
+  onOpenOnline: () => void;
   onOpenRules: (tab: 'GOMOKU' | 'XIANGQI' | 'JUNQI') => void;
   onResetStats: () => void;
 }
@@ -12,6 +13,7 @@ interface LobbyViewProps {
 export const LobbyView: React.FC<LobbyViewProps> = ({
   stats,
   onSelectGame,
+  onOpenOnline,
   onOpenRules,
   onResetStats,
 }) => {
@@ -44,16 +46,23 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               清茶一盏会知音，方寸木盘定乾坤
             </h1>
             <p className="text-sm sm:text-base text-[#5D4037] max-w-2xl leading-relaxed">
-              欢迎莅临「雅弈阁」。阁内陈设香榧木十五路五子棋盘、楚河汉界传统象棋与铁道沙盘陆战军旗。既可独自与多境界 AI 博弈推演，亦可邀挚友同屏切磋。
+              欢迎莅临「雅弈阁」。阁内陈设香榧木十五路五子棋盘、楚河汉界传统象棋与铁道沙盘陆战军旗。既可独自与多境界 AI 博弈推演，亦可同屏或远程联机手谈。
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
-              onClick={() => onSelectGame('GOMOKU', 'PVE')}
+              onClick={onOpenOnline}
               className="px-5 py-2.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
             >
-              即刻入席对弈
+              <Wifi className="w-4 h-4" />
+              进入联机弈馆
+            </button>
+            <button
+              onClick={() => onSelectGame('GOMOKU', 'PVE')}
+              className="px-4 py-2.5 rounded-lg bg-[#3E2723] hover:bg-[#291D16] text-[#F7F3E8] text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+            >
+              单机人机对弈
               <ArrowRight className="w-4 h-4" />
             </button>
             <button

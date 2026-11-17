@@ -1,4 +1,4 @@
-export type GameTab = 'LOBBY' | 'GOMOKU' | 'XIANGQI' | 'JUNQI';
+export type GameTab = 'LOBBY' | 'GOMOKU' | 'XIANGQI' | 'JUNQI' | 'ONLINE';
 
 export type PlayMode = 'PVE' | 'PVP';
 

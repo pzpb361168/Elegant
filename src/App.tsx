@@ -11,11 +11,22 @@ import { LobbyView } from './components/LobbyView';
 import { GomokuGame } from './components/GomokuGame';
 import { XiangqiGame } from './components/XiangqiGame';
 import { JunqiGame } from './components/JunqiGame';
+import { OnlineArena } from './components/OnlineArena';
 import { RulesModal } from './components/RulesModal';
-import { Volume2, VolumeX } from 'lucide-react';
+import { Volume2, VolumeX, BookOpen } from 'lucide-react';
+
+function getInitialRoomParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('room');
+  return code ? code.trim().toUpperCase() : null;
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<GameTab>('LOBBY');
+  const [initialRoomCode] = useState<string | null>(getInitialRoomParam);
+  const [activeTab, setActiveTab] = useState<GameTab>(() =>
+    getInitialRoomParam() ? 'ONLINE' : 'LOBBY'
+  );
   const [playMode, setPlayMode] = useState<PlayMode>('PVE');
   const [difficulty, setDifficulty] = useState<AIDifficulty>('MEDIUM');
   const [junqiSubMode, setJunqiSubMode] = useState<JunqiSubMode>('FLIP');
@@ -26,13 +37,23 @@ export default function App() {
     tab: 'GOMOKU' | 'XIANGQI' | 'JUNQI';
   }>({ open: false, tab: 'GOMOKU' });
 
+  const handleRoomUrlSync = useCallback((roomId: string | null) => {
+    const url = new URL(window.location.href);
+    if (roomId) {
+      url.searchParams.set('room', roomId);
+    } else {
+      url.searchParams.delete('room');
+    }
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
   const handleToggleSound = () => {
     const next = soundFX.toggle();
     setSoundEnabled(next);
   };
 
   const handleSelectGame = (
-    game: Exclude<GameTab, 'LOBBY'>,
+    game: Exclude<GameTab, 'LOBBY' | 'ONLINE'>,
     mode?: PlayMode,
     junqiSub?: JunqiSubMode
   ) => {
@@ -43,7 +64,7 @@ export default function App() {
   };
 
   const handleRecordOutcome = useCallback(
-    (game: Exclude<GameTab, 'LOBBY'>, outcome: 'WIN' | 'LOSS' | 'DRAW') => {
+    (game: Exclude<GameTab, 'LOBBY' | 'ONLINE'>, outcome: 'WIN' | 'LOSS' | 'DRAW') => {
       const updated = recordGameOutcome(game, outcome);
       setStats(updated);
     },
@@ -134,14 +155,16 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              const targetTab =
-                activeTab === 'LOBBY' ? 'GOMOKU' : activeTab;
-              setRulesModal({ open: true, tab: targetTab });
+              setActiveTab('ONLINE');
               soundFX.playSelect();
             }}
-            className="py-1 border-b-2 border-transparent hover:text-[#291D16] hover:border-[#8D6E63] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'ONLINE'
+                ? 'border-[#B91C1C] text-[#291D16] font-semibold'
+                : 'border-transparent hover:text-[#291D16] hover:border-[#8D6E63]'
+            }`}
           >
-            棋道典籍
+            联机弈馆
           </button>
         </nav>
 
@@ -173,6 +196,10 @@ export default function App() {
           <LobbyView
             stats={stats}
             onSelectGame={handleSelectGame}
+            onOpenOnline={() => {
+              setActiveTab('ONLINE');
+              soundFX.playSelect();
+            }}
             onOpenRules={(tab) => setRulesModal({ open: true, tab })}
             onResetStats={handleResetStats}
           />
@@ -209,11 +236,30 @@ export default function App() {
             onRecordResult={(res) => handleRecordOutcome('JUNQI', res)}
           />
         )}
+
+        {activeTab === 'ONLINE' && (
+          <OnlineArena
+            initialRoomCode={initialRoomCode}
+            onRoomUrlSync={handleRoomUrlSync}
+          />
+        )}
       </main>
 
       {/* Quiet Oriental Footer */}
-      <footer className="border-t border-[#D8CBB8] bg-[#EFE9D8]/70 py-5 px-6 text-center text-xs text-[#6E5A4F]">
-        雅弈阁 · 东方经典木艺棋室 — 集成五子棋、中国象棋与陆战军旗（翻棋 / 布阵双模式）
+      <footer className="border-t border-[#D8CBB8] bg-[#EFE9D8]/70 py-5 px-6 flex flex-wrap items-center justify-center gap-4 text-xs text-[#6E5A4F]">
+        <span>雅弈阁 · 东方经典木艺棋室 — 支持人机博弈、本地双人与实时联机对弈</span>
+        <button
+          type="button"
+          onClick={() => {
+            const tab =
+              activeTab === 'XIANGQI' || activeTab === 'JUNQI' ? activeTab : 'GOMOKU';
+            setRulesModal({ open: true, tab });
+          }}
+          className="inline-flex items-center gap-1 text-[#7C5332] hover:text-[#291D16] hover:underline cursor-pointer"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          查阅棋道典籍
+        </button>
       </footer>
 
       {/* Rules Modal */}

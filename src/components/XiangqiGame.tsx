@@ -528,6 +528,12 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
   const [capturedBlack, setCapturedBlack] = useState<XiangqiPiece[]>([]);
   const [moveLogs, setMoveLogs] = useState<MoveLogEntry[]>([]);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [moveEffect, setMoveEffect] = useState<{
+    to: Coord;
+    isCapture: boolean;
+    isCheck: boolean;
+    key: number;
+  } | null>(null);
 
   const aiTimerRef = useRef<number | null>(null);
 
@@ -554,6 +560,7 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
     setCapturedBlack([]);
     setMoveLogs([]);
     setElapsedSeconds(0);
+    setMoveEffect(null);
     soundFX.playSelect();
   }, []);
 
@@ -612,6 +619,12 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
       const nextInCheck = isSideInCheck(nextBoard, nextSide);
 
       setInCheckSide(nextInCheck ? nextSide : null);
+      setMoveEffect({
+        to,
+        isCapture: Boolean(captured),
+        isCheck: nextInCheck,
+        key: Date.now() + Math.random(),
+      });
 
       if (remainingMoves.length === 0) {
         // Checkmate or Stalemate (in Xiangqi, stalemate is also a loss for the stalemated side)
@@ -626,11 +639,11 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
       }
 
       if (nextInCheck) {
-        soundFX.playCheck();
+        soundFX.playXiangqiCheck();
       } else if (captured) {
-        soundFX.playCapture();
+        soundFX.playXiangqiCapture();
       } else {
-        soundFX.playMove();
+        soundFX.playXiangqiMove();
       }
 
       setTurn(nextSide);
@@ -695,6 +708,7 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
     setSelected(null);
     setLegalTargets([]);
     setHintMove(null);
+    setMoveEffect(null);
     setInCheckSide(isSideInCheck(snapshot.board, snapshot.turn) ? snapshot.turn : null);
     setHistory((prev) => prev.slice(0, targetIdx));
     setMoveLogs((prev) => prev.slice(steps));
@@ -905,6 +919,9 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
                   const isFrom = lastMove?.from.r === r && lastMove?.from.c === c;
                   const isTo = lastMove?.to.r === r && lastMove?.to.c === c;
                   const isHintDest = hintMove?.to.r === r && hintMove?.to.c === c;
+                  const isFxTarget = moveEffect?.to.r === r && moveEffect?.to.c === c;
+                  const isCheckedGeneral =
+                    piece?.type === 'G' && inCheckSide !== null && piece.side === inCheckSide;
 
                   return (
                     <button
@@ -918,16 +935,34 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
                         <span className="w-3 h-3 rounded-full bg-[#7C5332]/50" />
                       )}
 
+                      {/* Threatened General pulsing cinnabar aura */}
+                      {isCheckedGeneral && (
+                        <span className="absolute inset-0 rounded-full border-3 border-[#B91C1C] bg-[#B91C1C]/20 pointer-events-none animate-xiangqi-general-pulse" />
+                      )}
+
+                      {/* Move / Capture impact ring */}
+                      {isFxTarget && moveEffect && (
+                        <span
+                          key={`xq-ring-${moveEffect.key}`}
+                          className={`absolute inset-0 rounded-full pointer-events-none ${
+                            moveEffect.isCapture
+                              ? 'border-[3px] border-[#B91C1C] bg-[#B91C1C]/15 animate-xiangqi-capture'
+                              : 'border-2 border-[#9A6B32]/85 animate-xiangqi-ring'
+                          }`}
+                        />
+                      )}
+
                       {/* Xiangqi Wooden Carved Disc Piece */}
                       {piece && (
                         <div
+                          key={isFxTarget && moveEffect ? `xq-pc-${moveEffect.key}` : 'xq-pc'}
                           className={`w-[86%] h-[86%] rounded-full flex items-center justify-center transition-transform duration-150 bg-radial-[at_35%_30%] from-[#FFFDF7] via-[#F5E6C8] to-[#DFC393] border-2 shadow-[0_4px_7px_rgba(45,27,18,0.45)] ${
                             piece.side === 'RED'
                               ? 'border-[#991B1B] text-[#B91C1C]'
                               : 'border-[#1E293B] text-[#1E293B]'
-                          } ${isSel ? '-translate-y-1.5 ring-3 ring-[#0F766E] scale-105' : ''} ${
-                            isTo ? 'ring-2 ring-[#B91C1C]/70' : ''
-                          }`}
+                          } ${isFxTarget ? 'animate-xiangqi-slam' : ''} ${
+                            isSel ? '-translate-y-1.5 ring-3 ring-[#0F766E] scale-105' : ''
+                          } ${isTo ? 'ring-2 ring-[#B91C1C]/70' : ''}`}
                         >
                           <div
                             className={`w-[84%] h-[84%] rounded-full border flex items-center justify-center ${
@@ -939,6 +974,16 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
                             </span>
                           </div>
                         </div>
+                      )}
+
+                      {/* Floating capture callout badge */}
+                      {isFxTarget && moveEffect?.isCapture && (
+                        <span
+                          key={`xq-tag-${moveEffect.key}`}
+                          className="absolute -top-2 z-20 px-1.5 py-0.5 rounded bg-[#B91C1C] text-[#FFFDF7] font-serif-oriental font-bold text-xs shadow-md pointer-events-none animate-fx-float-tag"
+                        >
+                          吃
+                        </span>
                       )}
 
                       {/* Legal Target Marker (Jade dot for empty, Jade ring for capture) */}
@@ -959,6 +1004,20 @@ export const XiangqiGame: React.FC<XiangqiGameProps> = ({
               )}
             </div>
           </div>
+
+          {/* Non-blocking dramatic Check (將軍) Stamp Flash */}
+          {moveEffect?.isCheck && winner === null && (
+            <div
+              key={`xq-check-${moveEffect.key}`}
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+            >
+              <div className="px-7 py-3 rounded-xl bg-[#7F1D1D]/92 border-2 border-[#FDE68A] shadow-2xl animate-xiangqi-check-banner">
+                <span className="font-serif-oriental font-bold text-3xl sm:text-4xl tracking-[0.35em] text-[#FEF3C7]">
+                  將 軍
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Victory Overlay Modal */}
           {winner !== null && (

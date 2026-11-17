@@ -138,17 +138,20 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                   一、军衔等级与克制关系
                 </h3>
                 <p className="text-xs text-[#5D4037]">
-                  从大到小依次为：<strong>司令 &gt; 军长 &gt; 师长 &gt; 旅长 &gt; 团长 &gt; 营长 &gt; 连长 &gt; 排长 &gt; 工兵</strong>。同级相遇同归于尽。
+                  从大到小依次为：<strong>司令 &gt; 军长 &gt; 师长 &gt; 旅长 &gt; 团长 &gt; 营长 &gt; 连长 &gt; 排长 &gt; 工兵</strong>。交战严格遵循<strong>只能大吃小或同级对兑（同归于尽）</strong>，低官阶棋子不可主动撞击高官阶敌子送死。所有阵亡棋子均会在棋盘两侧亮明陈列。
                 </p>
                 <ul className="text-xs text-[#5D4037] space-y-1 list-disc pl-4 mt-1.5">
                   <li>
-                    <strong>炸弹：</strong>可移动，与敌方任何棋子（含地雷、司令）交战均同归于尽。
+                    <strong>炸弹：</strong>可移动，与敌方任何非扛旗棋子（含地雷、司令）交战均同归于尽，可直接炸毁地雷。
                   </li>
                   <li>
-                    <strong>地雷：</strong>不可移动。唯有<strong>工兵</strong>可安全排除地雷，其余棋子触雷均同归于尽。
+                    <strong>地雷（排雷前置）：</strong>不可移动。唯有<strong>工兵</strong>可直接安全排雷；炸弹可直接炸雷（同归于尽）；当己方<strong>已无工兵</strong>时，普通棋子连续撞击同一颗地雷满 3 次亦可抵消清除该雷。
                   </li>
                   <li>
-                    <strong>军旗：</strong>不可移动。扛走敌方军旗或消灭敌方全部可移动棋子即获胜。
+                    <strong>军旗（扛旗归营与无子判输）：</strong>不可移动。须先清除敌方<strong>全部地雷</strong>，再由己方存活<strong>最低官阶</strong>棋子扛起敌旗并<strong>带回己方大本营</strong>方获胜；此外，任一方场上<strong>已无任何可移动棋子或棋子全灭</strong>时直接判输。
+                  </li>
+                  <li>
+                    <strong>带旗护体：</strong>扛起敌方军旗的棋子<strong>不允许被吃掉</strong>，敌军仅可通过卡位阻挡路线的方式进行<strong>堵截</strong>；带旗子自身亦不可主动强攻敌军，需靠友军开路护送回营。
                   </li>
                 </ul>
               </div>

@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-paper: #F7F3E8;
+    --bg-card: #EFE9D8;
+    --wood-light: #DEC08F;
+    --wood-mid: #CFA66E;
+    --wood-dark: #3E2723;
+    --cinnabar: #B91C1C;
+    --jade: #0F766E;
+  }
+
+  body {
+    background-color: #F7F3E8;
+    color: #291D16;
+    font-family: 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, .font-serif-oriental {
+    font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  }
+
+  .font-mono-tabular {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.wood-board-surface {
+  background-color: #D8B580;
+  background-image: 
+    repeating-linear-gradient(
+      90deg,
+      rgba(120, 72, 32, 0.03) 0px,
+      rgba(120, 72, 32, 0.03) 2px,
+      transparent 2px,
+      transparent 9px
+    ),
+    radial-gradient(circle at 50% 45%, rgba(255, 245, 225, 0.35), rgba(145, 95, 45, 0.25));
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 0.45),
+    inset 0 -3px 8px rgba(62, 39, 35, 0.25),
+    0 12px 28px -6px rgba(45, 27, 18, 0.22);
+}
+
+.paper-texture {
+  background-color: #F7F3E8;
+  background-image: radial-gradient(rgba(120, 90, 50, 0.05) 1px, transparent 0);
+  background-size: 24px 24px;
+}

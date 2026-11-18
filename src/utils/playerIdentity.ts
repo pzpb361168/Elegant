@@ -1,4 +1,3 @@
-import Taro from '@tarojs/taro';
 import type { PlayerIdentity } from '../shared/onlineTypes';
 
 const PLAYER_ID_KEY = 'yayi_online_player_id';
@@ -36,36 +35,16 @@ export function generateRandomAlias(): string {
 }
 
 export function getOrCreatePlayerIdentity(): PlayerIdentity {
-  let playerId = '';
-  try {
-    playerId = String(Taro.getStorageSync(PLAYER_ID_KEY) || '');
-  } catch {
-    playerId = '';
-  }
-
+  let playerId = sessionStorage.getItem(PLAYER_ID_KEY);
   if (!playerId) {
     playerId = `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    try {
-      Taro.setStorageSync(PLAYER_ID_KEY, playerId);
-    } catch {
-      // Ignore
-    }
+    sessionStorage.setItem(PLAYER_ID_KEY, playerId);
   }
 
-  let nickname = '';
-  try {
-    nickname = String(Taro.getStorageSync(NICKNAME_KEY) || '');
-  } catch {
-    nickname = '';
-  }
-
+  let nickname = localStorage.getItem(NICKNAME_KEY);
   if (!nickname || !nickname.trim()) {
     nickname = generateRandomAlias();
-    try {
-      Taro.setStorageSync(NICKNAME_KEY, nickname);
-    } catch {
-      // Ignore
-    }
+    localStorage.setItem(NICKNAME_KEY, nickname);
   }
 
   return { playerId, nickname };
@@ -74,10 +53,6 @@ export function getOrCreatePlayerIdentity(): PlayerIdentity {
 export function savePlayerNickname(nickname: string): PlayerIdentity {
   const current = getOrCreatePlayerIdentity();
   const clean = nickname.trim().slice(0, 16) || generateRandomAlias();
-  try {
-    Taro.setStorageSync(NICKNAME_KEY, clean);
-  } catch {
-    // Ignore
-  }
+  localStorage.setItem(NICKNAME_KEY, clean);
   return { ...current, nickname: clean };
 }

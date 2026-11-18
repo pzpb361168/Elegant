@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Taro from '@tarojs/taro';
-import { View, Text, Button, Input } from '@tarojs/components';
 import type {
   ClientToServerMessage,
   JunqiSubMode,
@@ -15,9 +13,19 @@ import {
   getOrCreatePlayerIdentity,
   savePlayerNickname,
 } from '../utils/playerIdentity';
-import { DEFAULT_WS_SERVER_URL, getSavedWsUrl, saveWsUrl } from '../utils/wsConfig';
 import { soundFX } from '../utils/sound';
 import { OnlineRoomView } from './OnlineRoomView';
+import {
+  Plus,
+  RefreshCw,
+  Users,
+  Wifi,
+  WifiOff,
+  DoorOpen,
+  Dice5,
+  Eye,
+  AlertCircle,
+} from 'lucide-react';
 
 interface OnlineArenaProps {
   initialRoomCode?: string | null;
@@ -32,25 +40,21 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
   const [nicknameDraft, setNicknameDraft] = useState<string>(identity.nickname);
   const [nicknameSavedNotice, setNicknameSavedNotice] = useState<boolean>(false);
 
-  const [wsUrl, setWsUrl] = useState<string>(getSavedWsUrl);
-  const [wsUrlDraft, setWsUrlDraft] = useState<string>(getSavedWsUrl);
-  const [showWsConfig, setShowWsConfig] = useState<boolean>(false);
-
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
   const [publicRooms, setPublicRooms] = useState<PublicRoomSummary[]>([]);
   const [activeRoom, setActiveRoom] = useState<SanitizedRoomState | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
+  // Create room form state
   const [createGame, setCreateGame] = useState<OnlineGameType>('GOMOKU');
   const [createJunqiSub, setCreateJunqiSub] = useState<JunqiSubMode>('FLIP');
   const [createPublic, setCreatePublic] = useState<boolean>(true);
   const [createRoomName, setCreateRoomName] = useState<string>('');
   const [joinCodeInput, setJoinCodeInput] = useState<string>(initialRoomCode || '');
 
-  const socketTaskRef = useRef<Taro.SocketTask | null>(null);
-  const isOpenRef = useRef<boolean>(false);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const pendingRoomJoinRef = useRef<string | null>(initialRoomCode || null);
   const activeRoomRef = useRef<SanitizedRoomState | null>(null);
   const identityRef = useRef<PlayerIdentity>(identity);
@@ -63,219 +67,170 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
     identityRef.current = identity;
   }, [identity]);
 
-  useEffect(() => {
-    if (initialRoomCode) {
-      setJoinCodeInput(initialRoomCode);
-      pendingRoomJoinRef.current = initialRoomCode;
-    }
-  }, [initialRoomCode]);
-
   const sendWs = useCallback((msg: ClientToServerMessage) => {
-    const task = socketTaskRef.current;
-    if (task && isOpenRef.current) {
-      task.send({ data: JSON.stringify(msg) });
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
     }
   }, []);
 
   const showError = useCallback((text: string) => {
     setErrorBanner(text);
-    setTimeout(() => {
+    window.setTimeout(() => {
       setErrorBanner((curr) => (curr === text ? null : curr));
     }, 4000);
   }, []);
 
+  // Connect WebSocket with automatic reconnection & state resync
   useEffect(() => {
     let unmounted = false;
 
     const connect = () => {
       if (unmounted) return;
-      if (socketTaskRef.current) {
-        try {
-          socketTaskRef.current.close({});
-        } catch {
-          // Ignore
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (unmounted) {
+          ws.close();
+          return;
         }
-        socketTaskRef.current = null;
-      }
-      isOpenRef.current = false;
+        setWsConnected(true);
+        const me = identityRef.current;
+        ws.send(JSON.stringify({ type: 'lobby:subscribe', player: me } satisfies ClientToServerMessage));
 
-      Promise.resolve(Taro.connectSocket({ url: wsUrl }))
-        .then((task) => {
-          if (unmounted) {
-            try {
-              task.close({});
-            } catch {
-              // Ignore
-            }
-            return;
-          }
-          socketTaskRef.current = task;
+        const targetRoom = activeRoomRef.current?.roomId || pendingRoomJoinRef.current;
+        if (targetRoom) {
+          ws.send(
+            JSON.stringify({
+              type: 'room:join',
+              player: me,
+              roomId: targetRoom,
+            } satisfies ClientToServerMessage)
+          );
+          pendingRoomJoinRef.current = null;
+        }
+      };
 
-          task.onOpen(() => {
-            if (unmounted) {
-              task.close({});
-              return;
-            }
-            isOpenRef.current = true;
-            setWsConnected(true);
-            const me = identityRef.current;
-            task.send({
-              data: JSON.stringify({
-                type: 'lobby:subscribe',
-                player: me,
-              } satisfies ClientToServerMessage),
-            });
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as ServerToClientMessage;
+          if (msg.type === 'lobby:rooms_update') {
+            setPublicRooms(msg.rooms);
+            setOnlineUsers(msg.onlineUsers);
+          } else if (msg.type === 'room:joined') {
+            setActiveRoom(msg.state);
+            onRoomUrlSync?.(msg.roomId);
+            soundFX.playSelect();
+          } else if (msg.type === 'room:state_sync') {
+            const prev = activeRoomRef.current;
+            const next = msg.state;
+            const prevSteps = prev?.moveLogs.length ?? 0;
+            const nextSteps = next.moveLogs.length;
 
-            const targetRoom = activeRoomRef.current?.roomId || pendingRoomJoinRef.current;
-            if (targetRoom) {
-              task.send({
-                data: JSON.stringify({
-                  type: 'room:join',
-                  player: me,
-                  roomId: targetRoom,
-                } satisfies ClientToServerMessage),
-              });
-              pendingRoomJoinRef.current = null;
-            }
-          });
-
-          task.onMessage((res) => {
-            try {
-              const rawStr = typeof res.data === 'string' ? res.data : '';
-              if (!rawStr) return;
-              const msg = JSON.parse(rawStr) as ServerToClientMessage;
-              if (msg.type === 'lobby:rooms_update') {
-                setPublicRooms(msg.rooms);
-                setOnlineUsers(msg.onlineUsers);
-              } else if (msg.type === 'room:joined') {
-                setActiveRoom(msg.state);
-                onRoomUrlSync?.(msg.roomId);
-                soundFX.playSelect();
-              } else if (msg.type === 'room:state_sync') {
-                const prev = activeRoomRef.current;
-                const next = msg.state;
-                const prevSteps = prev?.moveLogs.length ?? 0;
-                const nextSteps = next.moveLogs.length;
-
-                if (nextSteps > prevSteps && prev?.roomId === next.roomId) {
-                  if (next.gameType === 'GOMOKU' && next.gomoku) {
-                    if (next.status === 'FINISHED' && next.gomoku.winner !== 'DRAW') {
-                      soundFX.playGomokuWin();
-                    } else {
-                      soundFX.playGomokuPlace();
-                    }
-                  } else if (next.gameType === 'XIANGQI' && next.xiangqi) {
-                    const prevCap =
-                      (prev?.xiangqi?.capturedRed.length ?? 0) +
-                      (prev?.xiangqi?.capturedBlack.length ?? 0);
-                    const nextCap =
-                      next.xiangqi.capturedRed.length + next.xiangqi.capturedBlack.length;
-                    if (next.status === 'FINISHED' && next.xiangqi.winner !== null) {
-                      soundFX.playVictory();
-                    } else if (next.xiangqi.inCheckSide !== null) {
-                      soundFX.playXiangqiCheck();
-                    } else if (nextCap > prevCap) {
-                      soundFX.playXiangqiCapture();
-                    } else {
-                      soundFX.playXiangqiMove();
-                    }
-                  } else if (next.gameType === 'JUNQI' && next.junqi) {
-                    const jq = next.junqi;
-                    const isFlip =
-                      jq.lastMove !== null &&
-                      jq.lastMove.from.r === jq.lastMove.to.r &&
-                      jq.lastMove.from.c === jq.lastMove.to.c;
-                    if (next.status === 'FINISHED' && jq.winner !== null) {
-                      soundFX.playVictory();
-                    } else if (isFlip) {
-                      soundFX.playJunqiFlip();
-                    } else if (
-                      jq.lastBanner.includes('爆破清雷') ||
-                      jq.lastBanner.includes('强行排雷成功') ||
-                      jq.lastBanner.includes('同归于尽')
-                    ) {
-                      soundFX.playJunqiClash('BOMB');
-                    } else if (
-                      jq.lastBanner.includes('已受创') ||
-                      jq.lastBanner.includes('阵亡') ||
-                      jq.lastBanner.includes('失利')
-                    ) {
-                      soundFX.playJunqiClash('LOSS');
-                    } else if (
-                      jq.lastBanner.includes('拔得敌旗') ||
-                      jq.lastBanner.includes('排雷成功') ||
-                      jq.lastBanner.includes('击溃') ||
-                      jq.lastBanner.includes('告捷') ||
-                      jq.lastBanner.includes('得手')
-                    ) {
-                      soundFX.playJunqiClash('WIN');
-                    } else {
-                      soundFX.playJunqiMove();
-                    }
-                  }
+            if (nextSteps > prevSteps && prev?.roomId === next.roomId) {
+              if (next.gameType === 'GOMOKU' && next.gomoku) {
+                if (next.status === 'FINISHED' && next.gomoku.winner !== 'DRAW') {
+                  soundFX.playGomokuWin();
+                } else {
+                  soundFX.playGomokuPlace();
                 }
-                setActiveRoom(next);
-              } else if (msg.type === 'room:chat_message') {
-                setActiveRoom((prev) => {
-                  if (!prev || prev.roomId !== msg.roomId) return prev;
-                  if (prev.chatMessages.some((m) => m.id === msg.message.id)) return prev;
-                  return {
-                    ...prev,
-                    chatMessages: [...prev.chatMessages, msg.message],
-                  };
-                });
-              } else if (msg.type === 'room:left') {
-                setActiveRoom(null);
-                onRoomUrlSync?.(null);
-              } else if (msg.type === 'room:error') {
-                showError(msg.message);
-                soundFX.playCheck();
+              } else if (next.gameType === 'XIANGQI' && next.xiangqi) {
+                const prevCap =
+                  (prev?.xiangqi?.capturedRed.length ?? 0) +
+                  (prev?.xiangqi?.capturedBlack.length ?? 0);
+                const nextCap =
+                  next.xiangqi.capturedRed.length + next.xiangqi.capturedBlack.length;
+                if (next.status === 'FINISHED' && next.xiangqi.winner !== null) {
+                  soundFX.playVictory();
+                } else if (next.xiangqi.inCheckSide !== null) {
+                  soundFX.playXiangqiCheck();
+                } else if (nextCap > prevCap) {
+                  soundFX.playXiangqiCapture();
+                } else {
+                  soundFX.playXiangqiMove();
+                }
+              } else if (next.gameType === 'JUNQI' && next.junqi) {
+                const jq = next.junqi;
+                const isFlip =
+                  jq.lastMove !== null &&
+                  jq.lastMove.from.r === jq.lastMove.to.r &&
+                  jq.lastMove.from.c === jq.lastMove.to.c;
+                if (next.status === 'FINISHED' && jq.winner !== null) {
+                  soundFX.playVictory();
+                } else if (isFlip) {
+                  soundFX.playJunqiFlip();
+                } else if (
+                  jq.lastBanner.includes('爆破清雷') ||
+                  jq.lastBanner.includes('强行排雷成功') ||
+                  jq.lastBanner.includes('同归于尽')
+                ) {
+                  soundFX.playJunqiClash('BOMB');
+                } else if (
+                  jq.lastBanner.includes('已受创') ||
+                  jq.lastBanner.includes('阵亡') ||
+                  jq.lastBanner.includes('失利')
+                ) {
+                  soundFX.playJunqiClash('LOSS');
+                } else if (
+                  jq.lastBanner.includes('拔得敌旗') ||
+                  jq.lastBanner.includes('排雷成功') ||
+                  jq.lastBanner.includes('击溃') ||
+                  jq.lastBanner.includes('告捷') ||
+                  jq.lastBanner.includes('得手')
+                ) {
+                  soundFX.playJunqiClash('WIN');
+                } else {
+                  soundFX.playJunqiMove();
+                }
               }
-            } catch {
-              // Ignore malformed message
             }
-          });
-
-          task.onClose(() => {
-            isOpenRef.current = false;
-            setWsConnected(false);
-            if (!unmounted) {
-              reconnectTimerRef.current = setTimeout(connect, 2500);
-            }
-          });
-
-          task.onError(() => {
-            isOpenRef.current = false;
-            setWsConnected(false);
-          });
-        })
-        .catch(() => {
-          isOpenRef.current = false;
-          setWsConnected(false);
-          if (!unmounted) {
-            reconnectTimerRef.current = setTimeout(connect, 2500);
+            setActiveRoom(next);
+          } else if (msg.type === 'room:chat_message') {
+            setActiveRoom((prev) => {
+              if (!prev || prev.roomId !== msg.roomId) return prev;
+              // Idempotency guard against duplicate message IDs
+              if (prev.chatMessages.some((m) => m.id === msg.message.id)) return prev;
+              return {
+                ...prev,
+                chatMessages: [...prev.chatMessages, msg.message],
+              };
+            });
+          } else if (msg.type === 'room:left') {
+            setActiveRoom(null);
+            onRoomUrlSync?.(null);
+          } else if (msg.type === 'room:error') {
+            showError(msg.message);
+            soundFX.playCheck();
           }
-        });
+        } catch {
+          // Ignore malformed frame
+        }
+      };
+
+      ws.onclose = () => {
+        setWsConnected(false);
+        if (!unmounted) {
+          reconnectTimerRef.current = window.setTimeout(connect, 2000);
+        }
+      };
     };
 
     connect();
 
     return () => {
       unmounted = true;
-      isOpenRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (socketTaskRef.current) {
-        try {
-          socketTaskRef.current.close({});
-        } catch {
-          // Ignore
-        }
-        socketTaskRef.current = null;
+      if (wsRef.current) {
+        wsRef.current.close();
       }
     };
-  }, [wsUrl, onRoomUrlSync, showError]);
+  }, [onRoomUrlSync, showError]);
 
-  const handleSaveNickname = () => {
+  const handleSaveNickname = (e: React.FormEvent) => {
+    e.preventDefault();
     const updated = savePlayerNickname(nicknameDraft);
     setIdentity(updated);
     setNicknameDraft(updated.nickname);
@@ -294,21 +249,10 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
     soundFX.playSelect();
   };
 
-  const handleApplyWsUrl = () => {
-    const res = saveWsUrl(wsUrlDraft);
-    if (!res.ok) {
-      showError(res.error);
-      return;
-    }
-    setWsUrl(res.url);
-    setWsUrlDraft(res.url);
-    setShowWsConfig(false);
-    soundFX.playSelect();
-  };
-
-  const handleCreateRoom = () => {
+  const handleCreateRoom = (e: React.FormEvent) => {
+    e.preventDefault();
     if (!wsConnected) {
-      showError('尚未连上联机服务器，请在上方检查服务端 WS 地址并确认 server.ts 已启动');
+      showError('正在连接联机服务器，请稍候...');
       return;
     }
     sendWs({
@@ -326,7 +270,7 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
     if (!clean) return;
     if (!wsConnected) {
       pendingRoomJoinRef.current = clean;
-      showError('正在连接联机服务器，连上后将自动加入房间');
+      showError('正在连接联机服务器，连接成功后将自动入房');
       return;
     }
     sendWs({
@@ -336,6 +280,7 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
     });
   };
 
+  // Render active room if joined
   if (activeRoom) {
     return (
       <OnlineRoomView
@@ -448,6 +393,7 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
     );
   }
 
+  // Render Online Multiplayer Lobby
   const gameNameMap: Record<OnlineGameType, string> = {
     GOMOKU: '五子棋',
     XIANGQI: '中国象棋',
@@ -455,293 +401,309 @@ export const OnlineArena: React.FC<OnlineArenaProps> = ({
   };
 
   return (
-    <View className='page-container'>
-      {/* Connection & Identity Card */}
-      <View className='card-panel'>
-        <View style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12rpx' }}>
-          <Text className='font-serif-oriental' style={{ fontSize: '34rpx', fontWeight: 700, color: '#291D16' }}>
-            联机弈馆 · 跨海手谈
-          </Text>
-          <Text
-            style={{
-              fontSize: '22rpx',
-              fontWeight: 600,
-              color: wsConnected ? '#0F766E' : '#B91C1C',
-            }}
-          >
-            {wsConnected ? `已联机 · 在线 ${onlineUsers} 人` : '未连上服务器'}
-          </Text>
-        </View>
-        <Text style={{ fontSize: '22rpx', color: '#5D4037', display: 'block', lineHeight: '1.55', marginBottom: '18rpx' }}>
-          开设棋室并转发给微信好友，或输入房间号直接入座；支持全棋种实时同步、悔棋和棋协商与观战雅谈。
-        </Text>
+    <div className="max-w-[1240px] mx-auto px-4 sm:px-6 py-8 space-y-8">
+      {/* Top Identity & Connection Bar */}
+      <div className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-2xl p-6 flex flex-wrap items-center justify-between gap-6">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold font-serif-oriental text-[#291D16]">
+              联机弈馆 · 跨海手谈
+            </h1>
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                wsConnected ? 'text-[#0F766E]' : 'text-[#B91C1C]'
+              }`}
+            >
+              {wsConnected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+              {wsConnected ? `已联机 · 在线 ${onlineUsers} 人` : '正在重连服务器...'}
+            </span>
+          </div>
+          <p className="text-xs text-[#5D4037]">
+            创建棋室分享邀请链接给好友，或直接加入下方公开对局；支持全棋种实时同步、悔棋协商与观战雅谈
+          </p>
+        </div>
 
-        {/* Nickname Row */}
-        <View style={{ display: 'flex', alignItems: 'center', gap: '10rpx', marginBottom: '16rpx' }}>
-          <Input
+        {/* Nickname Setter */}
+        <form onSubmit={handleSaveNickname} className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-[#5D4037]">我的雅号：</label>
+          <input
+            type="text"
             value={nicknameDraft}
-            onInput={(e) => setNicknameDraft(e.detail.value)}
-            maxlength={16}
-            placeholder='输入我的雅号'
-            className='input-field'
-            style={{ flex: 1 }}
+            onChange={(e) => setNicknameDraft(e.target.value)}
+            maxLength={16}
+            placeholder="输入对局昵称"
+            className="px-3 py-2 rounded-lg bg-[#F7F3E8] border border-[#D8CBB8] text-xs font-semibold text-[#291D16] w-36 focus:outline-none focus:border-[#7C5332]"
           />
-          <Button onClick={handleRandomAlias} className='btn-soft'>
-            随机
-          </Button>
-          <Button onClick={handleSaveNickname} className='btn-primary-dark'>
-            {nicknameSavedNotice ? '已更新' : '保存'}
-          </Button>
-        </View>
-
-        {/* Configurable WebSocket Endpoint Panel */}
-        <View className='sub-panel'>
-          <View style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12rpx' }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ fontSize: '21rpx', color: '#6E5A4F', display: 'block' }}>
-                当前联机服务端 (WebSocket)
-              </Text>
-              <Text className='font-mono-tabular' style={{ fontSize: '21rpx', color: '#291D16', wordBreak: 'break-all' }}>
-                {wsUrl}
-              </Text>
-            </View>
-            <Button onClick={() => setShowWsConfig(!showWsConfig)} className='btn-soft'>
-              {showWsConfig ? '收起' : '设置地址'}
-            </Button>
-          </View>
-
-          {showWsConfig && (
-            <View style={{ marginTop: '14rpx', paddingTop: '14rpx', borderTop: '2rpx solid #D8CBB8' }}>
-              <Input
-                value={wsUrlDraft}
-                onInput={(e) => setWsUrlDraft(e.detail.value)}
-                placeholder='ws://127.0.0.1:3000/ws 或 wss://域名/ws'
-                className='input-field'
-                style={{ width: '100%', marginBottom: '12rpx' }}
-              />
-              <View style={{ display: 'flex', gap: '12rpx' }}>
-                <Button
-                  onClick={() => setWsUrlDraft(DEFAULT_WS_SERVER_URL)}
-                  className='btn-soft'
-                  style={{ flex: 1 }}
-                >
-                  恢复默认
-                </Button>
-                <Button onClick={handleApplyWsUrl} className='btn-jade' style={{ flex: 1 }}>
-                  保存并重连
-                </Button>
-              </View>
-            </View>
-          )}
-        </View>
-      </View>
+          <button
+            type="button"
+            onClick={handleRandomAlias}
+            title="随机雅号"
+            className="p-2 rounded-lg bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723] cursor-pointer"
+          >
+            <Dice5 className="w-4 h-4" />
+          </button>
+          <button
+            type="submit"
+            className="px-3.5 py-2 rounded-lg bg-[#3E2723] hover:bg-[#291D16] text-[#F7F3E8] text-xs font-semibold cursor-pointer whitespace-nowrap"
+          >
+            {nicknameSavedNotice ? '已更新' : '确认雅号'}
+          </button>
+        </form>
+      </div>
 
       {errorBanner && (
-        <View
-          style={{
-            backgroundColor: 'rgba(185, 28, 28, 0.1)',
-            border: '2rpx solid rgba(185, 28, 28, 0.45)',
-            color: '#991B1B',
-            padding: '18rpx 22rpx',
-            borderRadius: '16rpx',
-            fontSize: '23rpx',
-            fontWeight: 600,
-          }}
-        >
-          <Text>{errorBanner}</Text>
-        </View>
+        <div className="bg-[#B91C1C]/10 border border-[#B91C1C]/40 text-[#991B1B] px-4 py-3 rounded-xl text-xs font-medium flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{errorBanner}</span>
+        </div>
       )}
 
-      {/* Join by Room Code */}
-      <View className='card-panel'>
-        <Text className='section-title font-serif-oriental' style={{ display: 'block', marginBottom: '14rpx' }}>
-          凭房间号入席
-        </Text>
-        <View style={{ display: 'flex', gap: '12rpx', alignItems: 'center' }}>
-          <Input
-            value={joinCodeInput}
-            onInput={(e) => setJoinCodeInput(e.detail.value.toUpperCase())}
-            maxlength={8}
-            placeholder='输入 6 位房间号 (如 A3B9K2)'
-            className='input-field font-mono-tabular'
-            style={{ flex: 1 }}
-          />
-          <Button
-            disabled={!joinCodeInput.trim()}
-            onClick={() => handleJoinRoom(joinCodeInput)}
-            className={`btn-jade ${!joinCodeInput.trim() ? 'btn-disabled' : ''}`}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* Left 5 cols: Create Room & Join by Code */}
+        <div className="lg:col-span-5 space-y-6">
+          {/* Quick Join by Code */}
+          <div className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl p-5">
+            <h2 className="text-base font-bold font-serif-oriental text-[#291D16] mb-3">
+              凭房间号入席
+            </h2>
+            <div className="flex items-center gap-2.5">
+              <input
+                type="text"
+                value={joinCodeInput}
+                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                maxLength={8}
+                placeholder="输入 6 位房间号 (如 A3B9K2)"
+                className="flex-1 px-3.5 py-2.5 rounded-lg bg-[#F7F3E8] border border-[#D8CBB8] text-xs font-mono-tabular uppercase text-[#291D16] focus:outline-none focus:border-[#7C5332]"
+              />
+              <button
+                type="button"
+                disabled={!joinCodeInput.trim()}
+                onClick={() => handleJoinRoom(joinCodeInput)}
+                className="px-4 py-2.5 rounded-lg bg-[#0F766E] hover:bg-[#0D9488] disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <DoorOpen className="w-3.5 h-3.5" />
+                加入房间
+              </button>
+            </div>
+          </div>
+
+          {/* Create New Room Form */}
+          <form
+            onSubmit={handleCreateRoom}
+            className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl p-5 space-y-4"
           >
-            加入房间
-          </Button>
-        </View>
-      </View>
+            <div className="border-b border-[#D8CBB8] pb-2.5">
+              <h2 className="text-lg font-bold font-serif-oriental text-[#291D16]">
+                开设新棋室
+              </h2>
+              <p className="text-xs text-[#6E5A4F]">选择棋种与规则，即刻生成邀请房间</p>
+            </div>
 
-      {/* Create New Room */}
-      <View className='card-panel'>
-        <View className='section-header-row'>
-          <View>
-            <Text className='section-title font-serif-oriental'>开设新棋室</Text>
-            <Text className='section-subtitle' style={{ display: 'block' }}>
-              选择棋种与规则，即刻生成邀请房间
-            </Text>
-          </View>
-        </View>
-
-        <View style={{ marginBottom: '18rpx' }}>
-          <Text style={{ fontSize: '23rpx', fontWeight: 600, color: '#5D4037', display: 'block', marginBottom: '8rpx' }}>
-            选择棋种
-          </Text>
-          <View className='segment-group'>
-            {(['GOMOKU', 'XIANGQI', 'JUNQI'] as OnlineGameType[]).map((gt) => (
-              <Button
-                key={gt}
-                onClick={() => setCreateGame(gt)}
-                className={`segment-btn ${createGame === gt ? 'segment-btn--red' : ''}`}
-              >
-                {gameNameMap[gt]}
-              </Button>
-            ))}
-          </View>
-        </View>
-
-        {createGame === 'JUNQI' && (
-          <View style={{ marginBottom: '18rpx' }}>
-            <Text style={{ fontSize: '23rpx', fontWeight: 600, color: '#5D4037', display: 'block', marginBottom: '8rpx' }}>
-              军旗玩法规则
-            </Text>
-            <View className='segment-group'>
-              <Button
-                onClick={() => setCreateJunqiSub('FLIP')}
-                className={`segment-btn ${createJunqiSub === 'FLIP' ? 'segment-btn--dark' : ''}`}
-              >
-                随机翻棋模式
-              </Button>
-              <Button
-                onClick={() => setCreateJunqiSub('DEPLOY')}
-                className={`segment-btn ${createJunqiSub === 'DEPLOY' ? 'segment-btn--dark' : ''}`}
-              >
-                暗棋布阵模式
-              </Button>
-            </View>
-          </View>
-        )}
-
-        <View style={{ marginBottom: '18rpx' }}>
-          <Text style={{ fontSize: '23rpx', fontWeight: 600, color: '#5D4037', display: 'block', marginBottom: '8rpx' }}>
-            房间名称（可选）
-          </Text>
-          <Input
-            value={createRoomName}
-            onInput={(e) => setCreateRoomName(e.detail.value)}
-            maxlength={24}
-            placeholder={`${identity.nickname}的${gameNameMap[createGame]}室`}
-            className='input-field'
-            style={{ width: '100%' }}
-          />
-        </View>
-
-        <View style={{ marginBottom: '22rpx' }}>
-          <Text style={{ fontSize: '23rpx', fontWeight: 600, color: '#5D4037', display: 'block', marginBottom: '8rpx' }}>
-            房间可见性
-          </Text>
-          <View className='segment-group'>
-            <Button
-              onClick={() => setCreatePublic(true)}
-              className={`segment-btn ${createPublic ? 'segment-btn--dark' : ''}`}
-            >
-              公开大厅可见
-            </Button>
-            <Button
-              onClick={() => setCreatePublic(false)}
-              className={`segment-btn ${!createPublic ? 'segment-btn--dark' : ''}`}
-            >
-              私密（仅邀请）
-            </Button>
-          </View>
-        </View>
-
-        <Button onClick={handleCreateRoom} className='btn-primary-red' style={{ width: '100%' }}>
-          创建房间并入座
-        </Button>
-      </View>
-
-      {/* Public Rooms List */}
-      <View className='card-panel'>
-        <View className='section-header-row'>
-          <View>
-            <Text className='section-title font-serif-oriental'>公开棋室大厅</Text>
-            <Text className='section-subtitle' style={{ display: 'block' }}>
-              实时同步当前开放的棋局
-            </Text>
-          </View>
-          <Button
-            onClick={() => sendWs({ type: 'lobby:subscribe', player: identity })}
-            className='btn-soft'
-          >
-            刷新
-          </Button>
-        </View>
-
-        {publicRooms.length === 0 ? (
-          <View style={{ padding: '44rpx 0', textAlign: 'center' }}>
-            <Text style={{ fontSize: '26rpx', fontWeight: 600, color: '#4E342E', display: 'block', marginBottom: '8rpx' }}>
-              当前大厅暂无公开棋室
-            </Text>
-            <Text style={{ fontSize: '22rpx', color: '#8D6E63' }}>
-              请在上方开设新棋室，或邀请微信好友入座
-            </Text>
-          </View>
-        ) : (
-          <View style={{ display: 'flex', flexDirection: 'column', gap: '14rpx' }}>
-            {publicRooms.map((room) => {
-              const isJoinable = room.status === 'WAITING' && room.playerCount < 2;
-              const statusLabel =
-                room.status === 'WAITING'
-                  ? '等待棋友'
-                  : room.status === 'DEPLOYING'
-                  ? '布阵中'
-                  : room.status === 'PLAYING'
-                  ? '激战中'
-                  : '已终局';
-
-              return (
-                <View
-                  key={room.roomId}
-                  className='sub-panel'
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14rpx' }}
-                >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={{ display: 'flex', alignItems: 'center', gap: '10rpx' }}>
-                      <Text className='font-serif-oriental' style={{ fontSize: '27rpx', fontWeight: 700, color: '#291D16' }}>
-                        {room.roomName}
-                      </Text>
-                      <Text className='font-mono-tabular' style={{ fontSize: '22rpx', color: '#8D6E63' }}>
-                        #{room.roomId}
-                      </Text>
-                    </View>
-                    <Text style={{ fontSize: '21rpx', color: '#6E5A4F', display: 'block', marginTop: '6rpx' }}>
-                      {gameNameMap[room.gameType]}
-                      {room.gameType === 'JUNQI' &&
-                        `(${room.junqiSubMode === 'DEPLOY' ? '布阵' : '翻棋'})`}
-                      {' · '}
-                      房主：{room.hostNickname}
-                      {' · '}
-                      {room.playerCount}/2 席 · {statusLabel}
-                    </Text>
-                  </View>
-
-                  <Button
-                    onClick={() => handleJoinRoom(room.roomId)}
-                    className={isJoinable ? 'btn-primary-dark' : 'btn-soft'}
+            <div>
+              <label className="block text-xs font-semibold text-[#5D4037] mb-2">选择棋种</label>
+              <div className="grid grid-cols-3 gap-2 p-1 bg-[#E4DAC3] rounded-lg">
+                {(['GOMOKU', 'XIANGQI', 'JUNQI'] as OnlineGameType[]).map((gt) => (
+                  <button
+                    key={gt}
+                    type="button"
+                    onClick={() => setCreateGame(gt)}
+                    className={`py-2 px-2 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      createGame === gt
+                        ? 'bg-[#B91C1C] text-white shadow-sm'
+                        : 'text-[#4E342E] hover:text-[#291D16]'
+                    }`}
                   >
-                    {isJoinable ? '入座' : '观战'}
-                  </Button>
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </View>
-    </View>
+                    {gameNameMap[gt]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {createGame === 'JUNQI' && (
+              <div>
+                <label className="block text-xs font-semibold text-[#5D4037] mb-2">
+                  军旗玩法规则
+                </label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-[#E4DAC3] rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setCreateJunqiSub('FLIP')}
+                    className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      createJunqiSub === 'FLIP'
+                        ? 'bg-[#3E2723] text-[#F7F3E8]'
+                        : 'text-[#4E342E]'
+                    }`}
+                  >
+                    随机翻棋模式
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateJunqiSub('DEPLOY')}
+                    className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      createJunqiSub === 'DEPLOY'
+                        ? 'bg-[#3E2723] text-[#F7F3E8]'
+                        : 'text-[#4E342E]'
+                    }`}
+                  >
+                    暗棋布阵模式
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-[#5D4037] mb-2">
+                房间名称（可选）
+              </label>
+              <input
+                type="text"
+                value={createRoomName}
+                onChange={(e) => setCreateRoomName(e.target.value)}
+                maxLength={24}
+                placeholder={`${identity.nickname}的${gameNameMap[createGame]}室`}
+                className="w-full px-3.5 py-2 rounded-lg bg-[#F7F3E8] border border-[#D8CBB8] text-xs text-[#291D16] focus:outline-none focus:border-[#7C5332]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#5D4037] mb-2">房间可见性</label>
+              <div className="grid grid-cols-2 gap-2 p-1 bg-[#E4DAC3] rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setCreatePublic(true)}
+                  className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                    createPublic ? 'bg-[#3E2723] text-[#F7F3E8]' : 'text-[#4E342E]'
+                  }`}
+                >
+                  公开大厅可见
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreatePublic(false)}
+                  className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                    !createPublic ? 'bg-[#3E2723] text-[#F7F3E8]' : 'text-[#4E342E]'
+                  }`}
+                >
+                  私密（仅邀请链接）
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 px-4 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              创建房间并入座
+            </button>
+          </form>
+        </div>
+
+        {/* Right 7 cols: Public Room Lobby List */}
+        <div className="lg:col-span-7 bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl p-6 min-h-[460px] flex flex-col">
+          <div className="flex items-center justify-between border-b border-[#D8CBB8] pb-3 mb-4">
+            <div>
+              <h2 className="text-lg font-bold font-serif-oriental text-[#291D16]">
+                公开棋室大厅
+              </h2>
+              <p className="text-xs text-[#6E5A4F]">
+                实时同步当前开放的棋局，点击即可入座对弈或旁观观战
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => sendWs({ type: 'lobby:subscribe', player: identity })}
+              className="px-3 py-1.5 rounded-lg bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723] text-xs font-medium flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              刷新列表
+            </button>
+          </div>
+
+          {publicRooms.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center py-12 space-y-2">
+              <Users className="w-8 h-8 text-[#8D6E63]/70" />
+              <div className="text-sm font-semibold text-[#4E342E]">
+                当前大厅暂无公开棋室
+              </div>
+              <p className="text-xs text-[#8D6E63]">
+                您可在左侧开设一间公开棋室，或生成邀请链接邀好友前来手谈
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {publicRooms.map((room) => {
+                const isJoinable = room.status === 'WAITING' && room.playerCount < 2;
+                const statusLabel =
+                  room.status === 'WAITING'
+                    ? '等待棋友'
+                    : room.status === 'DEPLOYING'
+                    ? '布阵中'
+                    : room.status === 'PLAYING'
+                    ? '激战中'
+                    : '已终局';
+
+                return (
+                  <div
+                    key={room.roomId}
+                    className="bg-[#F7F3E8] border border-[#D8CBB8] hover:border-[#8D6E63] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 transition-colors"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-serif-oriental font-bold text-base text-[#291D16]">
+                          {room.roomName}
+                        </span>
+                        <span className="text-xs font-mono-tabular text-[#8D6E63]">
+                          #{room.roomId}
+                        </span>
+                      </div>
+                      <div className="text-xs text-[#6E5A4F]">
+                        <span className="font-semibold text-[#B91C1C]">
+                          {gameNameMap[room.gameType]}
+                          {room.gameType === 'JUNQI' &&
+                            ` (${room.junqiSubMode === 'DEPLOY' ? '布阵' : '翻棋'})`}
+                        </span>
+                        <span aria-hidden="true"> · </span>
+                        <span>房主：{room.hostNickname}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span className="font-mono-tabular">{room.playerCount}/2 席</span>
+                        <span aria-hidden="true"> · </span>
+                        <span className="font-mono-tabular">{room.spectatorCount} 人观战</span>
+                        <span aria-hidden="true"> · </span>
+                        <span className={isJoinable ? 'text-[#0F766E] font-semibold' : ''}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleJoinRoom(room.roomId)}
+                      className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
+                        isJoinable
+                          ? 'bg-[#3E2723] hover:bg-[#291D16] text-[#F7F3E8]'
+                          : 'bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723]'
+                      }`}
+                    >
+                      {isJoinable ? (
+                        <>
+                          <DoorOpen className="w-3.5 h-3.5" />
+                          入座对弈
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3.5 h-3.5" />
+                          进入观战
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };

@@ -1,4 +1,3 @@
-import Taro from '@tarojs/taro';
 import { AllGameStats, GameTab } from '../types/game';
 
 const STORAGE_KEY = 'yayi_pavilion_stats_v1';
@@ -11,9 +10,9 @@ const DEFAULT_STATS: AllGameStats = {
 
 export function loadGameStats(): AllGameStats {
   try {
-    const raw = Taro.getStorageSync(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATS;
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const parsed = JSON.parse(raw);
     return {
       GOMOKU: { ...DEFAULT_STATS.GOMOKU, ...(parsed.GOMOKU || {}) },
       XIANGQI: { ...DEFAULT_STATS.XIANGQI, ...(parsed.XIANGQI || {}) },
@@ -39,7 +38,7 @@ export function recordGameOutcome(
     [game]: target,
   };
   try {
-    Taro.setStorageSync(STORAGE_KEY, JSON.stringify(updated));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch {
     // Ignore storage quota errors
   }
@@ -48,7 +47,7 @@ export function recordGameOutcome(
 
 export function resetAllGameStats(): AllGameStats {
   try {
-    Taro.setStorageSync(STORAGE_KEY, JSON.stringify(DEFAULT_STATS));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_STATS));
   } catch {
     // Ignore
   }

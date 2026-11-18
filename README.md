@@ -1,37 +1,42 @@
-# 雅弈阁 · 微信小程序版（Taro 4 + React 18）
+# 雅弈阁 — 东方经典棋室（五子棋 · 中国象棋 · 陆战军旗）
 
-融合传统东方木艺美学的全栈棋类对战平台微信小程序版，完整迁移了 **五子棋**、**中国象棋**、**陆战军旗** 三款经典棋类的单机 AI / 本地双人玩法，以及基于 `Taro.connectSocket` 的 **实时 WebSocket 联机对战与观战**。
+融合传统东方木艺美学的全栈棋类对战平台，支持**单机人机博弈（PvE）**、**本地双人同屏（PvP）**以及**实时 WebSocket 联机对战与观战**。
 
-> **Git 分支说明**
-> - `main` 分支：保留完整的 **Web 版**（React 19 + Vite + Tailwind CSS + Express/WS）。
-> - `feat/wechat-miniprogram` 分支（当前分支）：**微信小程序版**（Taro 4 + React 18 + Canvas 2D + WebAudio）。
+> **双版本 Git 分支说明**
+> - `main` 分支（当前分支）：**网页版**（React 19 + Vite 8 + Tailwind CSS + Express/WS）。
+> - `feat/wechat-miniprogram` 分支：**微信小程序版**（Taro 4 + React 18 + Canvas 2D + WebSocket 联机服务端）。
+> - 切换至微信小程序版：`git checkout feat/wechat-miniprogram && npm install && npm run build:weapp`
 
 ---
 
 ## 核心功能一览
 
-### 1. 三大经典棋类与特色规则（全量适配小程序触控与 Canvas 2D）
+### 1. 三大经典棋类与特色规则
 - **五子棋（15×15 标准星位盘）**
-  - 原生微信 `<Canvas type="2d">` 高清 DPR 绘制棋盘、星位、坐标标记与五连珠胜负连线。
-  - 支持多难度 AI（初级 / 中级 / 高级）、本地双人、支招提示、悔棋与水墨涟漪落子动效。
+  - 支持多难度 AI（初级 / 中级 / 高级）与本地双人轮流对弈。
+  - 提供「支招提示」、悔棋、棋局战报记录与五连珠高亮连线。
 - **中国象棋（10×9 楚河汉界标准盘）**
-  - Canvas 2D 绘制楚河汉界与九宫格，完整实现将/帅照面、蹩马腿、塞象眼、炮打隔山、过河卒、将军/绝杀/困毙检测及双方被吃子陈列。
+  - 完整实现将/帅照面、蹩马腿、塞象眼、炮打隔山、过河卒等全部走法校验与将军/绝杀/困毙检测。
+  - 棋盘两侧/战况区实时收录双方被吃棋子。
 - **陆战军旗（翻棋模式 / 暗棋布阵双模式）**
-  - **排雷前置机制**：必须先清空敌方全部地雷，才能拔取敌方军旗。工兵可直接排雷；炸弹可直接炸雷（同归于尽）；己方无工兵存活时，连续 3 枚棋子撞击同一颗地雷亦可清除该雷（棋面显示 `1/3`、`2/3` 受损计数）。
+  - **排雷前置机制**：必须先清空敌方全部地雷，才能拔取敌方军旗。工兵可直接排雷并占领；炸弹可直接炸雷（同归于尽）；当己方已无工兵存活时，连续 3 枚棋子撞击同一颗地雷亦可清除该雷（棋面实时显示 `1/3`、`2/3` 受损标记）。
   - **动态最低官阶扛旗回营**：敌雷清空后，仅己方当前存活的**最低官阶**棋子（从工兵顺延至排长、连长……）可拔起敌方军旗，并将其**扛回己方大本营**方获胜。
-  - **带旗免吃、仅可堵截**：扛旗中的棋子不可被敌方吃掉，仅能卡位堵截；带旗子亦不可主动攻敌。
-  - **严格禁小打大**：常规官阶（`工兵`～`司令`）间仅允许**大吃小或同级同归**，禁止低官阶主动撞击高官阶送死（保留炸弹、排雷与三撞清雷）。
-  - **无子即时判输**：任一方场上无任何可移动棋子（含全部阵亡，或仅剩地雷/军旗）即直接判输。
-  - **棋盘两侧亮明阵亡**：所有模式下，棋盘左右两侧陈列匣实时公开亮明双方所有阵亡兵种。
+  - **带旗免吃、仅可堵截**：扛旗中的棋子不可被敌方吃掉，仅能通过卡位封锁路线进行堵截；带旗子本身亦不可主动攻敌，需依赖友军开路护送。
+  - **严格禁小打大**：常规官阶（`工兵`～`司令`）间仅允许**大吃小或同级对兑（同归于尽）**，禁止低官阶主动撞击高官阶送死；炸弹、工兵排雷及无工兵撞雷机制均保留。
+  - **无子即时判输**：任一方场上已无任何可移动棋子（含全部棋子阵亡，或仅余地雷、军旗）即直接判输。
+  - **棋盘两侧亮明阵亡**：所有模式下，棋盘左右两侧兵站陈列匣均实时公开亮明红蓝双方所有阵亡兵种。
 
-### 2. 实时联机大厅与微信分享
-- **SocketTask 实时联机**：基于 `Taro.connectSocket` 对接后端 `ws` 服务（`server.ts`），支持断线重连、公开大厅房间列表、房号直达与棋室文字聊天。
-- **可配置服务端地址**：联机大厅内置 WebSocket 地址设置与本地持久化（默认 `ws://127.0.0.1:3000/ws`），真机调试时可直接修改为局域网 IP（如 `ws://192.168.x.x:3000/ws`）或线上 `wss://` 域名。
-- **微信转发邀战**：支持页面级 `useShareAppMessage` 与房间内一键复制房号 / `<Button openType="share">` 转发邀友直达房间（自动解析 `?room=CODE` 参数）。
+### 2. 实时联机大厅与棋室
+- **双模式进房**：支持**公开棋室大厅列表**实时刷新，以及**生成房间邀请链接 / 房号**一键直达。
+- **免登录对局身份**：进入联机模式可自由设定对局昵称，默认自动生成东方雅号，刷新页面自动恢复席位。
+- **完整联机交互**：
+  - 覆盖五子棋、中国象棋、陆战军旗（翻棋 & 暗棋布阵）全棋种。
+  - 服务端权威裁判与防透视清洗（暗棋布阵迷雾隐藏未明牌敌子军衔，同时公开扛旗状态、地雷受损计数与两侧阵亡清单）。
+  - 支持自由换座、观战席实时同步、快捷语音/文字聊天、悔棋与和棋双方协商、认负及再来一局。
 
-### 3. 声效与自适应布局
-- 使用微信小程序 `Taro.createWebAudioContext()` 实时合成三套棋类声效，并采用 `Taro.getStorageSync` / `setStorageSync` 持久化战绩、静音开关、玩家昵称与联机地址。
-- 全套 `rpx` 响应式布局与底部安全区适配，无内联 `<svg>` DOM 节点，符合微信 WXML 渲染规范。
+### 3. 差异化落子特效与合成音效
+- 基于原生 **Web Audio API** 实时合成三套风格迥异的声效（木石敲击清响、象棋沉稳拍子与将军鼓鸣、军旗翻牌/行军/破敌/爆破声），支持顶部一键静音开关。
+- 配套 CSS 关键帧落子动画（五子棋水墨涟漪、象棋落子震环与吃子/将军浮标、军旗翻棋/行军准星/爆破光环），并完整适配系统 `prefers-reduced-motion` 无障碍设置。
 
 ---
 
@@ -39,10 +44,10 @@
 
 | 类别 | 技术选型 |
 | --- | --- |
-| 小程序框架 | Taro `4.3.3` · React `18.3.1` · TypeScript `5.6` |
-| 棋盘渲染与样式 | 微信原生 `Canvas 2D` · SCSS（`rpx` 单位）· CSS Keyframes |
-| 小程序能力适配 | `Taro.connectSocket` · `Taro.createWebAudioContext` · `Taro.getStorageSync` · `useShareAppMessage` |
-| 联机服务端 | Express 4 · `ws` WebSocket Server · `src/shared/gameRules.ts`（前后端共用规则引擎） |
+| 前端框架 | React 19 · TypeScript · Vite 8 |
+| 样式与动效 | Tailwind CSS v4 · Lucide Icons · 原生 CSS Keyframes |
+| 后端与实时通信 | Express 4 · `ws` WebSocket Server · Node.js 22+ 原生运行 `.ts` |
+| 规则引擎 | 前后端共享权威校验模块（`src/shared/gameRules.ts`） |
 
 ---
 
@@ -50,41 +55,36 @@
 
 ```text
 .
-├── project.config.json            # 微信开发者工具配置（已预设测试号 touristappid 与 urlCheck: false）
-├── babel.config.js                # Taro Babel 编译配置
-├── config/                        # Taro 4 构建配置（index.ts / dev.ts / prod.ts）
-├── server.ts                      # Express + WebSocket 独立联机服务端（默认端口 3000，/ws）
+├── server.ts                      # Express + WebSocket 联机服务端入口（默认端口 3000）
+├── index.html                     # 页面入口与字体/元数据配置
+├── package.json                   # 依赖与构建脚本
 ├── src/
-│   ├── app.config.ts              # 小程序全局页面与导航栏配置
-│   ├── app.scss                   # 全局 rpx 样式与三款棋类动效关键帧
-│   ├── app.tsx                    # Taro 入口组件
-│   ├── pages/index/
-│   │   ├── index.config.ts        # 首页导航与微信转发分享配置
-│   │   └── index.tsx              # 主框架（单机弈馆 / 联机大厅 / 底部导航 / 分享参数解析）
+│   ├── App.tsx                    # 主导航、本地战绩统计、规则弹窗与单机/联机切换
+│   ├── index.css                  # 全局主题变量、木纹/棋盘质感与三款棋类动效关键帧
 │   ├── shared/
-│   │   ├── onlineTypes.ts         # 联机协议与状态类型定义
+│   │   ├── onlineTypes.ts         # 联机协议、房间状态与棋盘类型定义
 │   │   └── gameRules.ts           # 前后端共用权威走法、军旗排雷/扛旗/判负及迷雾清洗引擎
 │   ├── components/
-│   │   ├── BoardCanvases.tsx      # 五子棋、象棋、军旗微信原生 Canvas 2D 棋盘组件
-│   │   ├── GomokuGame.tsx         # 单机/双人五子棋
-│   │   ├── XiangqiGame.tsx        # 单机/双人中国象棋
-│   │   ├── JunqiGame.tsx          # 单机/双人陆战军旗
+│   │   ├── GomokuGame.tsx         # 单机/双人五子棋棋盘与 AI
+│   │   ├── XiangqiGame.tsx        # 单机/双人中国象棋棋盘与 AI
+│   │   ├── JunqiGame.tsx          # 单机/双人陆战军旗棋盘与 AI
 │   │   ├── JunqiCapturedTray.tsx  # 军旗棋盘两侧阵亡棋子亮明陈列组件
-│   │   ├── OnlineArena.tsx        # Taro SocketTask 联机连接、断线重连与服务端地址配置
-│   │   ├── LobbyView.tsx          # 联机公开大厅、建房与地址设置面板
-│   │   ├── OnlineRoomView.tsx     # 联机棋室（席位、观战、聊天、分享邀请、协商面板）
-│   │   ├── OnlineBoardRenderer.tsx# 联机三棋种棋盘与特效渲染
+│   │   ├── OnlineArena.tsx        # 联机 WebSocket 客户端状态与断线重连管理
+│   │   ├── LobbyView.tsx          # 联机公开大厅、建房与房号加入界面
+│   │   ├── OnlineRoomView.tsx     # 联机棋室面板（席位、观战、聊天、悔棋/和棋协商）
+│   │   ├── OnlineBoardRenderer.tsx# 联机三棋种棋盘渲染与落子特效同步
 │   │   └── RulesModal.tsx         # 棋道规则典籍弹窗
+│   ├── types/
+│   │   └── game.ts                # 本地模式状态与战绩类型定义
 │   └── utils/
-│       ├── sound.ts               # Taro WebAudio 多棋种音效合成器
-│       ├── storage.ts             # 本地战绩存储（Taro Storage）
-│       ├── playerIdentity.ts      # 免登录雅号持久化（Taro Storage）
-│       └── wsConfig.ts            # 联机 WebSocket 服务地址配置持久化
+│       └── sound.ts               # Web Audio API 多棋种音效合成器
 ```
 
 ---
 
-## 小程序编译、联机服务与真机预览
+## 本地运行与构建
+
+> **环境要求**：Node.js 22+（`npm start` 需使用 Node 22 原生 TypeScript 类型剥离支持直接运行 `server.ts`）。
 
 ### 1. 安装依赖
 
@@ -92,31 +92,23 @@
 npm install
 ```
 
-### 2. 编译微信小程序产物（输出至 `dist/`）
+### 2. 启动开发环境（前端 Vite 中间件 + 后端 WebSocket 服务）
 
 ```bash
-# 生产/单次编译
-npm run build:weapp
+npm run dev
+```
 
-# 开发监听模式（修改代码自动重编 dist/）
-npm run dev:weapp
+启动后访问 `http://localhost:3000` 即可同时使用单机对弈与实时联机功能。
 
-# TypeScript 类型检查
+### 3. 类型检查与生产构建
+
+```bash
+# TypeScript 静态类型检查
 npm run lint
+
+# 构建前端静态资源至 dist/
+npm run build
+
+# 启动生产环境全栈服务（端口 3000）
+NODE_ENV=production npm start
 ```
-
-### 3. 导入微信开发者工具
-1. 打开 **微信开发者工具**，选择「导入项目」。
-2. 项目目录选择本仓库根目录（`/app/applet`，`project.config.json` 已设置 `miniprogramRoot: "dist/"`、`appid: "touristappid"` 与 `urlCheck: false`；也可直接导入 `dist/` 目录）。
-3. 若使用个人/企业正式 AppID，可在开发者工具详情中替换 AppID，并在测试环境开启「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」。
-
-### 4. 启动联机 WebSocket 服务端（如需联机对战）
-
-```bash
-# 启动独立 WebSocket 联机服务器（默认监听 0.0.0.0:3000，WS 路径为 /ws）
-npm run server
-```
-
-- **开发者工具模拟器联机**：在小程序「联机弈馆」内点击「设置地址」，保持默认 `ws://127.0.0.1:3000/ws` 即可直连本机服务端。
-- **局域网真机预览联机**：在小程序「联机弈馆 → 设置地址」中输入电脑局域网 IP（例如 `ws://192.168.1.100:3000/ws`），并确保手机与电脑处于同一局域网。
-- **正式发布上线**：部署 `server.ts` 至支持 TLS 的服务器并配置 `wss://你的域名/ws`，在微信公众平台配置 `socket 合法域名`。

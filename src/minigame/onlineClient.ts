@@ -12,6 +12,7 @@ import type { WxSocketTask } from './wx.d.ts';
 import {
   getOrCreatePlayerIdentity,
   getSavedWsUrl,
+  parseCloudContainerTarget,
   savePlayerNickname,
   saveWsUrl,
   showToast,
@@ -37,6 +38,8 @@ export class MiniGameOnlineClient {
   private socket: WxSocketTask | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private connectSeq = 0;
+  private initializedCloudEnv: string | null = null;
   private active = false;
   private onChange: () => void;
 
@@ -63,6 +66,7 @@ export class MiniGameOnlineClient {
 
   public stop(): void {
     this.active = false;
+    this.connectSeq++;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -106,6 +110,7 @@ export class MiniGameOnlineClient {
   }
 
   private closeSocket(): void {
+    this.connectSeq++;
     if (this.socket) {
       try {
         this.socket.close({ code: 1000, reason: 'client_reset' });
@@ -119,8 +124,54 @@ export class MiniGameOnlineClient {
 
   private connect(): void {
     if (!this.active) return;
+    const attemptId = ++this.connectSeq;
     this.state.connStatus = 'CONNECTING';
     this.onChange();
+
+    const cloudTarget = parseCloudContainerTarget(this.state.wsUrl);
+    if (cloudTarget) {
+      if (!wx.cloud || typeof wx.cloud.connectContainer !== 'function') {
+        this.state.connStatus = 'ERROR';
+        showToast('当前环境不支持微信云托管容器连接');
+        this.scheduleReconnect();
+        this.onChange();
+        return;
+      }
+
+      try {
+        if (this.initializedCloudEnv !== cloudTarget.env) {
+          wx.cloud.init({ env: cloudTarget.env });
+          this.initializedCloudEnv = cloudTarget.env;
+        }
+      } catch {
+        // Ignore duplicate cloud.init
+      }
+
+      wx.cloud
+        .connectContainer({
+          config: { env: cloudTarget.env },
+          service: cloudTarget.service,
+          path: cloudTarget.path,
+        })
+        .then(({ socketTask }) => {
+          if (!this.active || this.connectSeq !== attemptId) {
+            try {
+              socketTask.close({ code: 1000, reason: 'stale_connect' });
+            } catch {
+              // Ignore
+            }
+            return;
+          }
+          this.bindSocketTask(socketTask);
+        })
+        .catch(() => {
+          if (!this.active || this.connectSeq !== attemptId) return;
+          this.state.connStatus = 'ERROR';
+          this.scheduleReconnect();
+          this.onChange();
+        });
+      return;
+    }
 
     let task: WxSocketTask;
     try {
@@ -132,6 +183,10 @@ export class MiniGameOnlineClient {
       return;
     }
 
+    this.bindSocketTask(task);
+  }
+
+  private bindSocketTask(task: WxSocketTask): void {
     this.socket = task;
 
     task.onOpen(() => {

@@ -141,19 +141,41 @@ export function savePlayerNickname(nickname: string): PlayerIdentity {
   return { ...current, nickname: clean };
 }
 
+export interface CloudContainerTarget {
+  env: string;
+  service: string;
+  path: string;
+}
+
+export function parseCloudContainerTarget(url: string): CloudContainerTarget | null {
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('cloud://')) return null;
+  const rest = trimmed.slice('cloud://'.length);
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  const env = parts[0];
+  const service = parts[1];
+  const path = parts.length > 2 ? '/' + parts.slice(2).join('/') : '/ws';
+  return { env, service, path };
+}
+
+export function isValidWsTarget(url: string): boolean {
+  const trimmed = url.trim();
+  return (
+    trimmed.startsWith('ws://') ||
+    trimmed.startsWith('wss://') ||
+    parseCloudContainerTarget(trimmed) !== null
+  );
+}
+
 export function getSavedWsUrl(): string {
   const raw = getStorage(WS_URL_KEY);
-  return raw && (raw.startsWith('ws://') || raw.startsWith('wss://'))
-    ? raw
-    : DEFAULT_WS_SERVER_URL;
+  return raw && isValidWsTarget(raw) ? raw : DEFAULT_WS_SERVER_URL;
 }
 
 export function saveWsUrl(url: string): string {
   const trimmed = url.trim();
-  const valid =
-    trimmed.startsWith('ws://') || trimmed.startsWith('wss://')
-      ? trimmed
-      : DEFAULT_WS_SERVER_URL;
+  const valid = isValidWsTarget(trimmed) ? trimmed : DEFAULT_WS_SERVER_URL;
   setStorage(WS_URL_KEY, valid);
   return valid;
 }

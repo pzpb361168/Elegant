@@ -81,6 +81,15 @@ export interface WxGlobal {
   showShareMenu?(opts?: { withShareTicket?: boolean; menus?: string[] }): void;
   getLaunchOptionsSync?(): { query?: Record<string, string> };
   onShow?(cb: (res: { query?: Record<string, string> }) => void): void;
+  cloud?: {
+    init(opts?: { env?: string; traceUser?: boolean }): void;
+    connectContainer(opts: {
+      config: { env: string };
+      service: string;
+      path: string;
+      header?: Record<string, string>;
+    }): Promise<{ socketTask: WxSocketTask }>;
+  };
 }
 
 declare global {

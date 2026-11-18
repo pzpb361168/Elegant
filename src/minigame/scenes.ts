@@ -1323,9 +1323,9 @@ export class MiniGameApp {
       '设地址',
       () => {
         promptEditableModal(
-          '配置 WebSocket 地址',
+          '配置联机地址（支持云托管）',
           os.wsUrl,
-          '如 ws://192.168.1.100:3000/ws',
+          'cloud://环境ID/服务名 或 wss://域名/ws',
           (val) => {
             this.online.updateWsUrl(val);
             showToast('已更新服务地址');

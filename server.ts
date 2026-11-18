@@ -1,7 +1,5 @@
 import express from 'express';
 import http from 'http';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type {
   ChatMessage,
@@ -39,8 +37,6 @@ import {
   type ServerJunqiState,
 } from './src/shared/gameRules.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 interface ClientSession {
   ws: WebSocket;
@@ -894,20 +890,15 @@ async function startServer() {
     if (removed) broadcastLobbyUpdate();
   }, 30_000);
 
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+  app.get('/', (_req, res) => {
+    res.json({
+      service: 'YaYi Pavilion Mini Game WebSocket Server',
+      status: 'ok',
+      wsPath: '/ws',
+      rooms: rooms.size,
+      clients: clients.size,
     });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  });
 
   const PORT = Number(process.env.PORT) || 3000;
   server.listen(PORT, '0.0.0.0', () => {

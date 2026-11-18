@@ -1,28 +1,32 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "experimentalDecorators": true,
-    "useDefineForClassFields": false,
+    "target": "ES2020",
     "module": "ESNext",
-    "types": ["vite/client"],
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "skipLibCheck": true,
+    "removeComments": false,
+    "preserveConstEnums": true,
     "moduleResolution": "bundler",
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "allowJs": true,
+    "experimentalDecorators": true,
+    "noImplicitAny": false,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "lib",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "strictNullChecks": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "rootDir": ".",
     "jsx": "react-jsx",
-    "paths": {
-      "@/*": [
-        "./*"
-      ]
-    },
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"],
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "exclude": ["dist"]
+  "include": ["./src", "./config", "./server.ts"],
+  "exclude": ["node_modules", "dist"]
 }

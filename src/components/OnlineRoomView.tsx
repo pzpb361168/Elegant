@@ -1,22 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
+import Taro from '@tarojs/taro';
+import { View, Text, Button, Input, ScrollView } from '@tarojs/components';
 import type { Coord, PlayerIdentity, SanitizedRoomState } from '../shared/onlineTypes';
 import { JUNQI_RANK_NAMES, XIANGQI_PIECE_LABELS } from '../shared/gameRules';
 import { OnlineBoardRenderer } from './OnlineBoardRenderer';
-import {
-  Copy,
-  Check,
-  LogOut,
-  Users,
-  Send,
-  RotateCcw,
-  Handshake,
-  Flag,
-  Play,
-  RefreshCw,
-  Eye,
-  Award,
-  AlertCircle,
-} from 'lucide-react';
 
 interface OnlineRoomViewProps {
   room: SanitizedRoomState;
@@ -64,13 +51,6 @@ export const OnlineRoomView: React.FC<OnlineRoomViewProps> = ({
   const [copied, setCopied] = useState(false);
   const [chatText, setChatText] = useState('');
   const [rightTab, setRightTab] = useState<'CHAT' | 'LOG'>('CHAT');
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (rightTab === 'CHAT') {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [room.chatMessages.length, rightTab]);
 
   const gameTitle =
     room.gameType === 'GOMOKU'
@@ -79,8 +59,7 @@ export const OnlineRoomView: React.FC<OnlineRoomViewProps> = ({
       ? '中国象棋'
       : `陆战军旗 · ${room.junqiSubMode === 'FLIP' ? '翻棋模式' : '布阵模式'}`;
 
-  const seat1RoleName =
-    room.gameType === 'GOMOKU' ? '黑方 (先手)' : '红方 (先手)';
+  const seat1RoleName = room.gameType === 'GOMOKU' ? '黑方 (先手)' : '红方 (先手)';
   const seat2RoleName =
     room.gameType === 'GOMOKU'
       ? '白方 (后手)'
@@ -131,20 +110,17 @@ export const OnlineRoomView: React.FC<OnlineRoomViewProps> = ({
     return '';
   };
 
-  const handleCopyInvite = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', room.roomId);
-    navigator.clipboard
-      ?.writeText(url.toString())
-      .then(() => {
+  const handleCopyRoomId = () => {
+    Taro.setClipboardData({
+      data: room.roomId,
+      success: () => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => {});
+      },
+    });
   };
 
-  const handleChatSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendChat = () => {
     if (!chatText.trim()) return;
     onSendChat(chatText.trim());
     setChatText('');
@@ -168,479 +144,399 @@ export const OnlineRoomView: React.FC<OnlineRoomViewProps> = ({
   };
 
   return (
-    <div className="max-w-[1360px] mx-auto px-4 sm:px-6 py-6 space-y-5">
-      {/* Room Top Header Bar */}
-      <div className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={onLeave}
-            className="px-3 py-1.5 rounded-lg bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723] text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            退出房间
-          </button>
-          <div>
-            <div className="flex items-center gap-2 text-sm font-bold font-serif-oriental text-[#291D16]">
-              <span>{room.roomName}</span>
-              <span className="text-[#8D6E63] font-normal">·</span>
-              <span className="font-mono-tabular text-[#B91C1C]">#{room.roomId}</span>
-            </div>
-            <div className="text-xs text-[#6E5A4F]">
+    <View className='page-container'>
+      {/* Room Header Card */}
+      <View className='card-panel'>
+        <View style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12rpx', marginBottom: '14rpx' }}>
+          <View style={{ minWidth: 0, flex: 1 }}>
+            <View style={{ display: 'flex', alignItems: 'center', gap: '10rpx' }}>
+              <Text className='font-serif-oriental' style={{ fontSize: '30rpx', fontWeight: 700, color: '#291D16' }}>
+                {room.roomName}
+              </Text>
+              <Text className='font-mono-tabular' style={{ fontSize: '26rpx', fontWeight: 700, color: '#B91C1C' }}>
+                #{room.roomId}
+              </Text>
+            </View>
+            <Text style={{ fontSize: '21rpx', color: '#6E5A4F', display: 'block', marginTop: '4rpx' }}>
               {gameTitle} · {room.isPublic ? '公开棋室' : '私密房间'} ·{' '}
-              {room.viewerRole === 'SPECTATOR' ? '您当前为观战席位' : `您坐镇第 ${mySeatNumber} 席`}
-            </div>
-          </div>
-        </div>
+              {room.viewerRole === 'SPECTATOR' ? '观战席位' : `第 ${mySeatNumber} 席`}
+            </Text>
+          </View>
+          <Button onClick={onLeave} className='btn-soft'>
+            退出房间
+          </Button>
+        </View>
 
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={handleCopyInvite}
-            className="px-3.5 py-2 rounded-lg bg-[#3E2723] hover:bg-[#291D16] text-[#F7F3E8] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-[#34D399]" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? '已复制邀请链接' : '复制邀请链接'}
-          </button>
-        </div>
-      </div>
+        <View style={{ display: 'flex', gap: '14rpx' }}>
+          <Button onClick={handleCopyRoomId} className='btn-primary-dark' style={{ flex: 1 }}>
+            {copied ? '已复制房间号' : `复制房间号 #${room.roomId}`}
+          </Button>
+          <Button openType='share' className='btn-primary-red' style={{ flex: 1 }}>
+            邀请微信好友
+          </Button>
+        </View>
+      </View>
 
-      {/* Error Toast / Banner */}
       {errorBanner && (
-        <div className="bg-[#B91C1C]/10 border border-[#B91C1C]/40 text-[#991B1B] px-4 py-2.5 rounded-lg text-xs font-medium flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorBanner}</span>
-        </div>
+        <View
+          style={{
+            backgroundColor: 'rgba(185, 28, 28, 0.1)',
+            border: '2rpx solid rgba(185, 28, 28, 0.45)',
+            color: '#991B1B',
+            padding: '18rpx 22rpx',
+            borderRadius: '16rpx',
+            fontSize: '23rpx',
+            fontWeight: 600,
+          }}
+        >
+          <Text>{errorBanner}</Text>
+        </View>
       )}
 
-      {/* Pending Undo / Draw Negotiation Banner */}
+      {/* Pending Undo / Draw Negotiation */}
       {room.pendingRequest && (
-        <div className="bg-[#FDE68A]/45 border border-[#B45309]/40 rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-semibold text-[#78350F]">
+        <View
+          style={{
+            backgroundColor: 'rgba(253, 230, 138, 0.5)',
+            border: '2rpx solid rgba(180, 83, 9, 0.45)',
+            borderRadius: '18rpx',
+            padding: '20rpx',
+          }}
+        >
+          <Text style={{ fontSize: '25rpx', fontWeight: 700, color: '#78350F', display: 'block', marginBottom: '12rpx' }}>
             {mySeatNumber === room.pendingRequest.fromSeat
               ? `已向对手发起「${room.pendingRequest.type === 'UNDO' ? '请求悔棋' : '提议和棋'}」，等待对方回应...`
               : `${room.pendingRequest.fromNickname} 发起了「${
                   room.pendingRequest.type === 'UNDO' ? '请求悔棋' : '提议和棋'
                 }」，是否同意？`}
-          </div>
+          </Text>
           {mySeatNumber !== null && mySeatNumber !== room.pendingRequest.fromSeat && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onRespondAction(true)}
-                className="px-4 py-1.5 rounded-lg bg-[#0F766E] hover:bg-[#0D9488] text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
-              >
+            <View style={{ display: 'flex', gap: '14rpx' }}>
+              <Button onClick={() => onRespondAction(true)} className='btn-jade' style={{ flex: 1 }}>
                 同意请求
-              </button>
-              <button
-                type="button"
-                onClick={() => onRespondAction(false)}
-                className="px-4 py-1.5 rounded-lg bg-[#EFE9D8] hover:bg-[#E4DAC3] border border-[#D8CBB8] text-[#3E2723] text-xs font-semibold cursor-pointer whitespace-nowrap"
-              >
+              </Button>
+              <Button onClick={() => onRespondAction(false)} className='btn-soft' style={{ flex: 1 }}>
                 婉言谢绝
-              </button>
-            </div>
+              </Button>
+            </View>
           )}
-        </div>
+        </View>
       )}
 
-      {/* Main Two-Column Grid: Board (Left 8 cols) + Desk Panel (Right 4 cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        <div className="lg:col-span-8 flex flex-col items-center space-y-4">
-          {/* Turn Status & Action Bar */}
-          <div
-            className={`w-full ${
-              room.gameType === 'JUNQI' ? 'max-w-[760px]' : 'max-w-[600px]'
-            } px-5 py-3.5 rounded-xl bg-[#EFE9D8] border border-[#D8CBB8] flex flex-wrap items-center justify-between gap-3`}
+      {/* Turn Status & Action Toolbar */}
+      <View className='status-bar'>
+        <View>
+          <Text className='status-main-text' style={{ display: 'block' }}>
+            {getTurnLabel()}
+          </Text>
+          <Text className='status-sub-text font-mono-tabular' style={{ display: 'block' }}>
+            对局步数 {room.moveLogs.length}
+          </Text>
+          {room.gameType === 'JUNQI' && room.junqi && (
+            <Text className='status-sub-text' style={{ display: 'block', color: '#5D4037' }}>
+              红雷剩 {room.junqi.redMines} · 蓝雷剩 {room.junqi.blueMines} · 红扛旗：
+              {room.junqi.redMinRank !== null ? JUNQI_RANK_NAMES[room.junqi.redMinRank] : '无'} · 蓝扛旗：
+              {room.junqi.blueMinRank !== null ? JUNQI_RANK_NAMES[room.junqi.blueMinRank] : '无'}
+            </Text>
+          )}
+        </View>
+
+        <View className='status-toolbar'>
+          {isWaiting && mySeat && (
+            <Button
+              onClick={() => onToggleReady(!mySeat.ready)}
+              className={mySeat.ready ? 'btn-soft' : 'btn-primary-red'}
+            >
+              {mySeat.ready ? '取消准备' : '准备就绪'}
+            </Button>
+          )}
+
+          {isPlaying && mySeatNumber !== null && (
+            <>
+              <Button
+                disabled={room.moveLogs.length === 0 || room.pendingRequest !== null}
+                onClick={() => onRequestAction('UNDO')}
+                className={`btn-soft ${
+                  room.moveLogs.length === 0 || room.pendingRequest !== null ? 'btn-disabled' : ''
+                }`}
+              >
+                请求悔棋
+              </Button>
+              <Button
+                disabled={room.pendingRequest !== null}
+                onClick={() => onRequestAction('DRAW')}
+                className={`btn-soft ${room.pendingRequest !== null ? 'btn-disabled' : ''}`}
+              >
+                提议和棋
+              </Button>
+              <Button onClick={onResign} className='btn-outline-red'>
+                认负
+              </Button>
+            </>
+          )}
+
+          {isFinished && mySeatNumber !== null && (
+            <Button onClick={onRematch} className='btn-primary-red'>
+              再来一局
+            </Button>
+          )}
+        </View>
+      </View>
+
+      {/* Interactive Game Board */}
+      <OnlineBoardRenderer
+        room={room}
+        onGomokuMove={onGomokuMove}
+        onXiangqiMove={onXiangqiMove}
+        onJunqiFlip={onJunqiFlip}
+        onJunqiMove={onJunqiMove}
+        onJunqiSwapSetup={onJunqiSwapSetup}
+        onJunqiPresetSetup={onJunqiPresetSetup}
+        onJunqiConfirmSetup={onJunqiConfirmSetup}
+      />
+
+      {isFinished && (
+        <View
+          className='card-panel'
+          style={{ border: '3rpx solid rgba(185, 28, 28, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16rpx' }}
+        >
+          <View style={{ flex: 1 }}>
+            <Text className='font-serif-oriental' style={{ fontSize: '30rpx', fontWeight: 700, color: '#291D16', display: 'block' }}>
+              {winnerTitle()}
+            </Text>
+            <Text style={{ fontSize: '22rpx', color: '#6E5A4F', display: 'block', marginTop: '4rpx' }}>
+              共交锋 {room.moveLogs.length} 回合
+            </Text>
+          </View>
+          {mySeatNumber !== null && (
+            <Button onClick={onRematch} className='btn-primary-red'>
+              发起再战
+            </Button>
+          )}
+        </View>
+      )}
+
+      {/* Seats & Spectators */}
+      <View className='card-panel'>
+        <View className='section-header-row'>
+          <Text className='section-title font-serif-oriental'>棋席对坐与观战</Text>
+          <Text className='font-mono-tabular' style={{ fontSize: '22rpx', color: '#6E5A4F' }}>
+            观战 {room.spectators.length} 人
+          </Text>
+        </View>
+
+        <View style={{ display: 'flex', flexDirection: 'column', gap: '14rpx' }}>
+          {([room.seat1, room.seat2] as const).map((seat) => {
+            const roleLabel = seat.seatNumber === 1 ? seat1RoleName : seat2RoleName;
+            const isMe = seat.playerId === me.playerId;
+            return (
+              <View
+                key={seat.seatNumber}
+                className='sub-panel'
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  borderColor: isMe ? 'rgba(185, 28, 28, 0.65)' : '#D8CBB8',
+                }}
+              >
+                <View>
+                  <Text style={{ fontSize: '21rpx', color: '#6E5A4F', display: 'block' }}>
+                    {roleLabel}
+                    {seat.playerId ? (seat.connected ? ' · 在线' : ' · 重连中') : ''}
+                  </Text>
+                  <Text style={{ fontSize: '26rpx', fontWeight: 700, color: '#291D16', display: 'block', marginTop: '4rpx' }}>
+                    {seat.nickname ? `${seat.nickname}${isMe ? ' (我)' : ''}` : '虚位以待'}
+                  </Text>
+                </View>
+
+                <View>
+                  {seat.playerId ? (
+                    isWaiting && (
+                      <Text
+                        style={{
+                          fontSize: '22rpx',
+                          fontWeight: 700,
+                          color: seat.ready ? '#0F766E' : '#8D6E63',
+                        }}
+                      >
+                        {seat.ready ? '已准备' : '未准备'}
+                      </Text>
+                    )
+                  ) : (
+                    isWaiting &&
+                    room.viewerRole === 'SPECTATOR' && (
+                      <Button onClick={() => onSwitchSeat(seat.seatNumber)} className='btn-primary-dark'>
+                        入座
+                      </Button>
+                    )
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {room.gameType === 'XIANGQI' && room.xiangqi && (
+          <View className='sub-panel' style={{ marginTop: '14rpx' }}>
+            <Text style={{ fontSize: '22rpx', color: '#B91C1C', fontWeight: 600, display: 'block', marginBottom: '6rpx' }}>
+              红方斩获:{' '}
+              {room.xiangqi.capturedBlack.length === 0
+                ? '暂无'
+                : room.xiangqi.capturedBlack.map((p) => XIANGQI_PIECE_LABELS.BLACK[p.type]).join(' ')}
+            </Text>
+            <Text style={{ fontSize: '22rpx', color: '#1E293B', fontWeight: 600, display: 'block' }}>
+              黑方斩获:{' '}
+              {room.xiangqi.capturedRed.length === 0
+                ? '暂无'
+                : room.xiangqi.capturedRed.map((p) => XIANGQI_PIECE_LABELS.RED[p.type]).join(' ')}
+            </Text>
+          </View>
+        )}
+
+        {room.spectators.length > 0 && (
+          <Text style={{ fontSize: '22rpx', color: '#6E5A4F', display: 'block', marginTop: '14rpx' }}>
+            观战棋友：{room.spectators.map((s) => s.nickname).join('、')}
+          </Text>
+        )}
+      </View>
+
+      {/* Chat & Move Log Panel */}
+      <View className='card-panel'>
+        <View className='segment-group' style={{ marginBottom: '18rpx' }}>
+          <Button
+            onClick={() => setRightTab('CHAT')}
+            className={`segment-btn ${rightTab === 'CHAT' ? 'segment-btn--dark' : ''}`}
           >
-            <div>
-              <div className="text-sm font-semibold text-[#291D16]">{getTurnLabel()}</div>
-              <div className="text-xs text-[#6E5A4F]">
-                对局步数{' '}
-                <span className="font-mono-tabular font-semibold">
-                  {room.moveLogs.length}
-                </span>
-              </div>
-              {room.gameType === 'JUNQI' && room.junqi && (
-                <div className="text-[11px] text-[#5D4037] mt-0.5 font-medium">
-                  红雷剩{' '}
-                  <span className="font-mono-tabular font-bold text-[#98352E]">
-                    {room.junqi.redMines}
-                  </span>{' '}
-                  · 蓝雷剩{' '}
-                  <span className="font-mono-tabular font-bold text-[#26568B]">
-                    {room.junqi.blueMines}
-                  </span>{' '}
-                  · 红扛旗手：
-                  <span className="font-bold text-[#291D16]">
-                    {room.junqi.redMinRank !== null ? JUNQI_RANK_NAMES[room.junqi.redMinRank] : '无'}
-                  </span>{' '}
-                  · 蓝扛旗手：
-                  <span className="font-bold text-[#291D16]">
-                    {room.junqi.blueMinRank !== null ? JUNQI_RANK_NAMES[room.junqi.blueMinRank] : '无'}
-                  </span>
-                </div>
-              )}
-            </div>
+            雅谈交流 ({room.chatMessages.length})
+          </Button>
+          <Button
+            onClick={() => setRightTab('LOG')}
+            className={`segment-btn ${rightTab === 'LOG' ? 'segment-btn--dark' : ''}`}
+          >
+            实时棋谱 ({room.moveLogs.length})
+          </Button>
+        </View>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {isWaiting && mySeat && (
-                <button
-                  type="button"
-                  onClick={() => onToggleReady(!mySeat.ready)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
-                    mySeat.ready
-                      ? 'bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723]'
-                      : 'bg-[#B91C1C] hover:bg-[#991B1B] text-white'
-                  }`}
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  {mySeat.ready ? '取消准备' : '准备就绪'}
-                </button>
-              )}
-
-              {isPlaying && mySeatNumber !== null && (
-                <>
-                  <button
-                    type="button"
-                    disabled={room.moveLogs.length === 0 || room.pendingRequest !== null}
-                    onClick={() => onRequestAction('UNDO')}
-                    className="px-3 py-1.5 rounded-lg bg-[#E4DAC3] hover:bg-[#D8C9AA] disabled:opacity-40 text-[#3E2723] text-xs font-medium flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    请求悔棋
-                  </button>
-                  <button
-                    type="button"
-                    disabled={room.pendingRequest !== null}
-                    onClick={() => onRequestAction('DRAW')}
-                    className="px-3 py-1.5 rounded-lg bg-[#E4DAC3] hover:bg-[#D8C9AA] disabled:opacity-40 text-[#3E2723] text-xs font-medium flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    <Handshake className="w-3.5 h-3.5" />
-                    提议和棋
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onResign}
-                    className="px-3 py-1.5 rounded-lg border border-[#B91C1C]/50 text-[#B91C1C] hover:bg-[#B91C1C]/10 text-xs font-medium flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    <Flag className="w-3.5 h-3.5" />
-                    认负
-                  </button>
-                </>
-              )}
-
-              {isFinished && mySeatNumber !== null && (
-                <button
-                  type="button"
-                  onClick={onRematch}
-                  className="px-4 py-1.5 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  再来一局
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Interactive Board + Post-Match Summary Banner */}
-          <div className="relative w-full flex flex-col items-center">
-            <OnlineBoardRenderer
-              room={room}
-              onGomokuMove={onGomokuMove}
-              onXiangqiMove={onXiangqiMove}
-              onJunqiFlip={onJunqiFlip}
-              onJunqiMove={onJunqiMove}
-              onJunqiSwapSetup={onJunqiSwapSetup}
-              onJunqiPresetSetup={onJunqiPresetSetup}
-              onJunqiConfirmSetup={onJunqiConfirmSetup}
-            />
-
-            {isFinished && (
-              <div className="mt-4 w-full max-w-[600px] bg-[#EFE9D8] border-2 border-[#B91C1C]/60 rounded-xl px-5 py-4 flex flex-wrap items-center justify-between gap-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#B91C1C]/10 text-[#B91C1C] flex items-center justify-center shrink-0">
-                    <Award className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-base font-bold font-serif-oriental text-[#291D16]">
-                      {winnerTitle()}
-                    </div>
-                    <div className="text-xs text-[#6E5A4F]">
-                      共交锋 {room.moveLogs.length} 回合 · 可在棋盘检视终局或直接邀请再战
-                    </div>
-                  </div>
-                </div>
-                {mySeatNumber !== null && (
-                  <button
-                    type="button"
-                    onClick={onRematch}
-                    className="px-4 py-2 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
-                  >
-                    发起再来一局
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Desk Panel: Seats, Spectators, Chat & Move Logs */}
-        <div className="lg:col-span-4 flex flex-col gap-5">
-          {/* Two Player Seats + Spectators Card */}
-          <div className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl p-5 space-y-3.5">
-            <div className="flex items-center justify-between border-b border-[#D8CBB8] pb-2.5">
-              <h2 className="text-base font-bold font-serif-oriental text-[#291D16]">
-                棋席对坐与观战
-              </h2>
-              <span className="text-xs text-[#6E5A4F] flex items-center gap-1 font-mono-tabular">
-                <Eye className="w-3.5 h-3.5" />
-                观战 {room.spectators.length} 人
-              </span>
-            </div>
-
-            {/* Seat 1 & Seat 2 */}
-            {([room.seat1, room.seat2] as const).map((seat) => {
-              const roleLabel = seat.seatNumber === 1 ? seat1RoleName : seat2RoleName;
-              const isMe = seat.playerId === me.playerId;
-              return (
-                <div
-                  key={seat.seatNumber}
-                  className={`p-3 rounded-lg border flex items-center justify-between gap-2 ${
-                    isMe
-                      ? 'bg-[#F7F3E8] border-[#B91C1C]/60'
-                      : 'bg-[#F7F3E8]/70 border-[#D8CBB8]'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-xs text-[#6E5A4F]">
-                      <span className="font-semibold text-[#3E2723]">{roleLabel}</span>
-                      {seat.playerId && (
-                        <span>
-                          · {seat.connected ? '在线' : '离线重连中'}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-sm font-bold text-[#291D16] truncate mt-0.5">
-                      {seat.nickname ? (
-                        <>
-                          {seat.nickname}
-                          {isMe && <span className="text-xs font-normal text-[#B91C1C] ml-1.5">(我)</span>}
-                        </>
-                      ) : (
-                        <span className="text-xs font-normal text-[#8D6E63]">虚位以待</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="shrink-0">
-                    {seat.playerId ? (
-                      isWaiting && (
-                        <span
-                          className={`text-xs font-semibold ${
-                            seat.ready ? 'text-[#0F766E]' : 'text-[#8D6E63]'
-                          }`}
-                        >
-                          {seat.ready ? '已准备' : '未准备'}
-                        </span>
-                      )
-                    ) : (
-                      isWaiting &&
-                      room.viewerRole === 'SPECTATOR' && (
-                        <button
-                          type="button"
-                          onClick={() => onSwitchSeat(seat.seatNumber)}
-                          className="px-3 py-1 rounded bg-[#3E2723] hover:bg-[#291D16] text-[#F7F3E8] text-xs font-medium cursor-pointer whitespace-nowrap"
-                        >
-                          入座
-                        </button>
-                      )
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Xiangqi Captured Pieces Summary */}
-            {room.gameType === 'XIANGQI' && room.xiangqi && (
-              <div className="p-2.5 rounded-lg bg-[#F7F3E8] border border-[#D8CBB8] space-y-1.5 text-xs">
-                <div className="flex flex-wrap items-center gap-1">
-                  <span className="text-[#B91C1C] font-medium">红方斩获:</span>
-                  {room.xiangqi.capturedBlack.length === 0 ? (
-                    <span className="text-[#8D6E63]">暂无</span>
-                  ) : (
-                    room.xiangqi.capturedBlack.map((p, i) => (
-                      <span key={i} className="font-serif-oriental font-bold text-[#1E293B]">
-                        {XIANGQI_PIECE_LABELS.BLACK[p.type]}
-                      </span>
-                    ))
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  <span className="text-[#1E293B] font-medium">黑方斩获:</span>
-                  {room.xiangqi.capturedRed.length === 0 ? (
-                    <span className="text-[#8D6E63]">暂无</span>
-                  ) : (
-                    room.xiangqi.capturedRed.map((p, i) => (
-                      <span key={i} className="font-serif-oriental font-bold text-[#B91C1C]">
-                        {XIANGQI_PIECE_LABELS.RED[p.type]}
-                      </span>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Spectators list */}
-            {room.spectators.length > 0 && (
-              <div className="text-xs text-[#6E5A4F] pt-1 flex items-center gap-1.5 flex-wrap">
-                <Users className="w-3.5 h-3.5 shrink-0" />
-                <span>观战棋友：</span>
-                {room.spectators.map((s) => (
-                  <span key={s.playerId} className="text-[#3E2723] font-medium">
-                    {s.nickname}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Right Bottom Panel: Segmented Tabs for Chat vs Move Log */}
-          <div className="bg-[#EFE9D8] border border-[#D8CBB8] rounded-xl p-5 flex flex-col h-[410px]">
-            <div className="flex items-center gap-1 p-1 bg-[#E4DAC3] rounded-lg mb-3">
-              <button
-                type="button"
-                onClick={() => setRightTab('CHAT')}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  rightTab === 'CHAT'
-                    ? 'bg-[#3E2723] text-[#F7F3E8] shadow-sm'
-                    : 'text-[#4E342E] hover:text-[#291D16]'
-                }`}
-              >
-                雅谈交流 ({room.chatMessages.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightTab('LOG')}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  rightTab === 'LOG'
-                    ? 'bg-[#3E2723] text-[#F7F3E8] shadow-sm'
-                    : 'text-[#4E342E] hover:text-[#291D16]'
-                }`}
-              >
-                实时棋谱 ({room.moveLogs.length})
-              </button>
-            </div>
-
-            {rightTab === 'CHAT' ? (
-              <>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 mb-3">
-                  {room.chatMessages.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-xs text-[#8D6E63]">
-                      暂无言谈，发一句「请多指教」致意吧
-                    </div>
-                  ) : (
-                    room.chatMessages.map((msg) => {
-                      const isSys = msg.senderId === 'SYSTEM';
-                      const isMine = msg.senderId === me.playerId;
-                      if (isSys) {
-                        return (
-                          <div
-                            key={msg.id}
-                            className="text-[11px] text-center text-[#7C5332] bg-[#E4DAC3]/50 rounded py-1 px-2"
-                          >
-                            {msg.text}
-                          </div>
-                        );
-                      }
-                      return (
-                        <div
-                          key={msg.id}
-                          className={`rounded-lg px-3 py-2 text-xs ${
-                            isMine
-                              ? 'bg-[#3E2723] text-[#F7F3E8] ml-6'
-                              : 'bg-[#F7F3E8] text-[#291D16] mr-6 border border-[#D8CBB8]'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2 text-[10px] opacity-75 mb-0.5">
-                            <span>
-                              {msg.senderName} · {msg.roleLabel}
-                            </span>
-                            <span className="font-mono-tabular">{msg.timestamp}</span>
-                          </div>
-                          <div className="break-words">{msg.text}</div>
-                        </div>
-                      );
-                    })
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-
-                {/* Quick Phrases */}
-                <div className="flex flex-wrap gap-1.5 mb-2.5">
-                  {QUICK_PHRASES.map((phrase) => (
-                    <button
-                      key={phrase}
-                      type="button"
-                      onClick={() => onSendChat(phrase)}
-                      className="px-2 py-1 rounded bg-[#E4DAC3] hover:bg-[#D8C9AA] text-[#3E2723] text-[11px] font-medium cursor-pointer whitespace-nowrap"
+        {rightTab === 'CHAT' ? (
+          <View>
+            <ScrollView scrollY style={{ height: '300rpx', marginBottom: '14rpx' }}>
+              {room.chatMessages.length === 0 ? (
+                <View style={{ padding: '40rpx 0', textAlign: 'center' }}>
+                  <Text style={{ fontSize: '23rpx', color: '#8D6E63' }}>
+                    暂无言谈，发一句「请多指教」致意吧
+                  </Text>
+                </View>
+              ) : (
+                room.chatMessages.map((msg) => {
+                  const isSys = msg.senderId === 'SYSTEM';
+                  const isMine = msg.senderId === me.playerId;
+                  if (isSys) {
+                    return (
+                      <View
+                        key={msg.id}
+                        style={{
+                          textAlign: 'center',
+                          fontSize: '21rpx',
+                          color: '#7C5332',
+                          backgroundColor: 'rgba(228, 218, 195, 0.6)',
+                          borderRadius: '10rpx',
+                          padding: '8rpx 14rpx',
+                          marginBottom: '10rpx',
+                        }}
+                      >
+                        <Text>{msg.text}</Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View
+                      key={msg.id}
+                      style={{
+                        borderRadius: '14rpx',
+                        padding: '12rpx 18rpx',
+                        marginBottom: '10rpx',
+                        backgroundColor: isMine ? '#3E2723' : '#F7F3E8',
+                        color: isMine ? '#F7F3E8' : '#291D16',
+                        border: isMine ? 'none' : '2rpx solid #D8CBB8',
+                        marginLeft: isMine ? '60rpx' : '0',
+                        marginRight: isMine ? '0' : '60rpx',
+                      }}
                     >
-                      {phrase}
-                    </button>
-                  ))}
-                </div>
+                      <Text style={{ fontSize: '19rpx', opacity: 0.78, display: 'block', marginBottom: '4rpx' }}>
+                        {msg.senderName} · {msg.roleLabel} · {msg.timestamp}
+                      </Text>
+                      <Text style={{ fontSize: '24rpx', wordBreak: 'break-all' }}>{msg.text}</Text>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
 
-                {/* Chat Input */}
-                <form onSubmit={handleChatSubmit} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={chatText}
-                    onChange={(e) => setChatText(e.target.value)}
-                    maxLength={160}
-                    placeholder="输入雅谈内容..."
-                    className="flex-1 px-3 py-2 rounded-lg bg-[#F7F3E8] border border-[#D8CBB8] text-xs text-[#291D16] focus:outline-none focus:border-[#7C5332]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!chatText.trim()}
-                    className="px-3 py-2 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    发送
-                  </button>
-                </form>
-              </>
+            <View style={{ display: 'flex', flexWrap: 'wrap', gap: '10rpx', marginBottom: '14rpx' }}>
+              {QUICK_PHRASES.map((phrase) => (
+                <Button
+                  key={phrase}
+                  onClick={() => onSendChat(phrase)}
+                  style={{
+                    padding: '8rpx 16rpx',
+                    borderRadius: '10rpx',
+                    backgroundColor: '#E4DAC3',
+                    color: '#3E2723',
+                    fontSize: '21rpx',
+                    fontWeight: 600,
+                  }}
+                >
+                  {phrase}
+                </Button>
+              ))}
+            </View>
+
+            <View style={{ display: 'flex', gap: '12rpx', alignItems: 'center' }}>
+              <Input
+                value={chatText}
+                onInput={(e) => setChatText(e.detail.value)}
+                onConfirm={handleSendChat}
+                maxlength={160}
+                placeholder='输入雅谈内容...'
+                className='input-field'
+                style={{ flex: 1 }}
+              />
+              <Button
+                onClick={handleSendChat}
+                disabled={!chatText.trim()}
+                className={`btn-primary-red ${!chatText.trim() ? 'btn-disabled' : ''}`}
+              >
+                发送
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <ScrollView scrollY className='scroll-log-box'>
+            {room.moveLogs.length === 0 ? (
+              <View style={{ padding: '40rpx 0', textAlign: 'center' }}>
+                <Text style={{ fontSize: '23rpx', color: '#8D6E63' }}>棋局尚未落子</Text>
+              </View>
             ) : (
-              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-                {room.moveLogs.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-xs text-[#8D6E63]">
-                    棋局尚未落子
-                  </div>
-                ) : (
-                  room.moveLogs.map((log) => (
-                    <div
-                      key={log.step}
-                      className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded bg-[#F7F3E8]/80 text-[#3E2723]"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono-tabular font-semibold text-[#8D6E63] w-7">
-                          #{log.step}
-                        </span>
-                        <span className="font-medium">{log.actor}</span>
-                        <span className="text-[#6E5A4F]">·</span>
-                        <span className="font-semibold text-[#291D16]">{log.description}</span>
-                      </div>
-                      <span className="text-[11px] font-mono-tabular text-[#8D6E63]">
-                        {log.timestamp}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
+              room.moveLogs.map((log) => (
+                <View key={log.step} className='log-item-row'>
+                  <View style={{ display: 'flex', alignItems: 'center', gap: '10rpx', flex: 1, minWidth: 0 }}>
+                    <Text className='font-mono-tabular' style={{ fontWeight: 700, color: '#8D6E63' }}>
+                      #{log.step}
+                    </Text>
+                    <Text style={{ fontWeight: 600 }}>{log.actor}</Text>
+                    <Text style={{ color: '#6E5A4F' }}>·</Text>
+                    <Text style={{ fontWeight: 700, color: '#291D16' }}>{log.description}</Text>
+                  </View>
+                  <Text className='font-mono-tabular' style={{ fontSize: '20rpx', color: '#8D6E63', marginLeft: '10rpx' }}>
+                    {log.timestamp}
+                  </Text>
+                </View>
+              ))
             )}
-          </div>
-        </div>
-      </div>
-    </div>
+          </ScrollView>
+        )}
+      </View>
+    </View>
   );
 };

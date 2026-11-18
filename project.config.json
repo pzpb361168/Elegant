@@ -1,0 +1,22 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "yayi-pavilion-weapp",
+  "description": "雅弈阁 — 五子棋 · 中国象棋 · 陆战军旗 微信小程序",
+  "appid": "touristappid",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "compileHotReLoad": false,
+    "postcss": true,
+    "minified": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.5.5",
+  "condition": {}
+}

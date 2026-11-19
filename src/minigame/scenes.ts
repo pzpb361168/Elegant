@@ -1604,7 +1604,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'game:respond_action',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             accept: true,
           }),
@@ -1619,7 +1618,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'game:respond_action',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             accept: false,
           }),
@@ -1717,7 +1715,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'junqi:preset_setup',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             preset: 'BALANCED',
           }),
@@ -1732,7 +1729,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'junqi:preset_setup',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             preset: 'FORTRESS',
           }),
@@ -1747,7 +1743,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'junqi:confirm_setup',
-            playerId: os.player.playerId,
             roomId: room.roomId,
           }),
         {
@@ -1778,7 +1773,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'game:request_action',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             action: 'UNDO',
           }),
@@ -1793,7 +1787,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'game:request_action',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             action: 'DRAW',
           }),
@@ -1809,7 +1802,6 @@ export class MiniGameApp {
           confirmModal('确认认负', '确定投子认负并结束本局？', () =>
             this.online.send({
               type: 'game:resign',
-              playerId: os.player.playerId,
               roomId: room.roomId,
             })
           ),
@@ -1835,7 +1827,6 @@ export class MiniGameApp {
         () =>
           this.online.send({
             type: 'game:rematch',
-            playerId: os.player.playerId,
             roomId: room.roomId,
           }),
         {
@@ -1880,7 +1871,6 @@ export class MiniGameApp {
         (row, col) => {
           this.online.send({
             type: 'game:move',
-            playerId: os.player.playerId,
             roomId: room.roomId,
             payload: { kind: 'GOMOKU', r: row, c: col },
           });
@@ -1911,7 +1901,6 @@ export class MiniGameApp {
             if (isTarget) {
               this.online.send({
                 type: 'game:move',
-                playerId: os.player.playerId,
                 roomId: room.roomId,
                 payload: { kind: 'XIANGQI', from: os.selectedCoord, to: { r: row, c: col } },
               });
@@ -1965,7 +1954,6 @@ export class MiniGameApp {
       } else {
         this.online.send({
           type: 'junqi:swap_setup',
-          playerId: os.player.playerId,
           roomId: room.roomId,
           c1: os.selectedCoord,
           c2: { r: row, c: col },
@@ -1979,7 +1967,6 @@ export class MiniGameApp {
     if (jq.subMode === 'FLIP' && p && !p.revealed) {
       this.online.send({
         type: 'game:move',
-        playerId: os.player.playerId,
         roomId: room.roomId,
         payload: { kind: 'JUNQI_FLIP', r: row, c: col },
       });
@@ -1996,7 +1983,6 @@ export class MiniGameApp {
       if (os.legalTargets.some((m) => m.r === row && m.c === col)) {
         this.online.send({
           type: 'game:move',
-          playerId: os.player.playerId,
           roomId: room.roomId,
           payload: { kind: 'JUNQI_MOVE', from: os.selectedCoord, to: { r: row, c: col } },
         });
@@ -2027,7 +2013,6 @@ export class MiniGameApp {
       if (!text.trim()) return;
       this.online.send({
         type: 'chat:send',
-        playerId: os.player.playerId,
         roomId,
         text: text.trim().slice(0, 120),
       });

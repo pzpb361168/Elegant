@@ -10,15 +10,13 @@ import type {
 } from '../shared/onlineTypes.ts';
 import type { WxSocketTask } from './wx.d.ts';
 import {
-  getOrCreatePlayerIdentity,
-  getSavedWsUrl,
-  savePlayerNickname,
-  saveWsUrl,
   showToast,
 } from './platform.ts';
+import { loginWithWeChat } from './cloudAuth.ts';
+import { ONLINE_WSS_URL } from './cloudConfig.ts';
 import { soundFX } from './sound.ts';
 
-export type WsConnStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
+export type WsConnStatus = 'DISCONNECTED' | 'AUTHENTICATING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
 export interface OnlineClientState {
   wsUrl: string;
@@ -37,15 +35,16 @@ export class MiniGameOnlineClient {
   private socket: WxSocketTask | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private authenticationInFlight = false;
   private active = false;
   private onChange: () => void;
 
   constructor(onChange: () => void) {
     this.onChange = onChange;
     this.state = {
-      wsUrl: getSavedWsUrl(),
+      wsUrl: ONLINE_WSS_URL,
       connStatus: 'DISCONNECTED',
-      player: getOrCreatePlayerIdentity(),
+      player: { playerId: '', nickname: '微信棋友' },
       publicRooms: [],
       onlineUsers: 0,
       room: null,
@@ -76,26 +75,25 @@ export class MiniGameOnlineClient {
     this.state.pendingRoomJoin = clean;
     if (!this.active) this.start();
     else if (this.state.connStatus === 'CONNECTED') {
-      this.send({ type: 'room:join', player: this.state.player, roomId: clean });
+      this.send({ type: 'room:join', roomId: clean });
       this.state.pendingRoomJoin = null;
     }
     this.onChange();
   }
 
-  public updateWsUrl(nextUrl: string): void {
-    this.state.wsUrl = saveWsUrl(nextUrl);
-    this.reconnectAttempts = 0;
-    this.closeSocket();
-    if (this.active) this.connect();
+  public updateNickname(nick: string): void {
+    const nickname = nick.trim().slice(0, 16);
+    if (!nickname) return;
+    this.state.player = { ...this.state.player, nickname };
+    if (this.state.connStatus === 'CONNECTED') {
+      this.send({ type: 'profile:update', nickname });
+    }
     this.onChange();
   }
 
-  public updateNickname(nick: string): void {
-    this.state.player = savePlayerNickname(nick);
-    if (this.state.connStatus === 'CONNECTED') {
-      this.send({ type: 'lobby:subscribe', player: this.state.player });
-    }
-    this.onChange();
+  /** The production endpoint is fixed at build time; keep UI compatibility without accepting arbitrary hosts. */
+  public updateWsUrl(_nextUrl: string): void {
+    showToast('正式版联机服务地址不可修改');
   }
 
   public reconnectNow(): void {
@@ -119,6 +117,32 @@ export class MiniGameOnlineClient {
 
   private connect(): void {
     if (!this.active) return;
+    if (this.authenticationInFlight) return;
+    this.authenticationInFlight = true;
+    this.state.connStatus = 'AUTHENTICATING';
+    this.onChange();
+
+    void this.authenticateAndOpenSocket();
+  }
+
+  private async authenticateAndOpenSocket(): Promise<void> {
+    let token: string;
+    try {
+      const auth = await loginWithWeChat();
+      if (!this.active) return;
+      token = auth.token;
+      this.state.player = auth.player;
+    } catch (err) {
+      if (!this.active) return;
+      this.state.connStatus = 'ERROR';
+      showToast(err instanceof Error ? err.message : '微信身份认证失败');
+      this.scheduleReconnect();
+      this.onChange();
+      return;
+    } finally {
+      this.authenticationInFlight = false;
+    }
+
     this.state.connStatus = 'CONNECTING';
     this.onChange();
 
@@ -138,12 +162,7 @@ export class MiniGameOnlineClient {
       if (!this.active || this.socket !== task) return;
       this.reconnectAttempts = 0;
       this.state.connStatus = 'CONNECTED';
-      this.send({ type: 'lobby:subscribe', player: this.state.player });
-      const targetJoin = this.state.pendingRoomJoin || this.state.room?.roomId || null;
-      if (targetJoin) {
-        this.send({ type: 'room:join', player: this.state.player, roomId: targetJoin });
-        this.state.pendingRoomJoin = null;
-      }
+      this.send({ type: 'auth:login', token });
       this.onChange();
     });
 
@@ -185,6 +204,22 @@ export class MiniGameOnlineClient {
 
   private handleServerMessage(msg: ServerToClientMessage): void {
     switch (msg.type) {
+      case 'auth:ok': {
+        this.state.player = msg.player;
+        this.send({ type: 'lobby:subscribe' });
+        const targetJoin = this.state.pendingRoomJoin || this.state.room?.roomId || null;
+        if (targetJoin) {
+          this.send({ type: 'room:join', roomId: targetJoin });
+          this.state.pendingRoomJoin = null;
+        }
+        break;
+      }
+      case 'auth:error':
+        this.state.connStatus = 'ERROR';
+        showToast(msg.message);
+        this.closeSocket();
+        this.scheduleReconnect();
+        break;
       case 'lobby:rooms_update':
         this.state.publicRooms = msg.rooms;
         this.state.onlineUsers = msg.onlineUsers;
@@ -234,7 +269,7 @@ export class MiniGameOnlineClient {
         this.state.room = null;
         this.state.selectedCoord = null;
         this.state.legalTargets = [];
-        this.send({ type: 'lobby:subscribe', player: this.state.player });
+        this.send({ type: 'lobby:subscribe' });
         break;
       case 'room:error':
         showToast(msg.message);
@@ -258,7 +293,6 @@ export class MiniGameOnlineClient {
   public createRoom(gameType: OnlineGameType, junqiSubMode: JunqiSubMode, isPublic: boolean): void {
     this.send({
       type: 'room:create',
-      player: this.state.player,
       gameType,
       junqiSubMode,
       isPublic,
@@ -271,14 +305,13 @@ export class MiniGameOnlineClient {
       showToast('请输入房间号');
       return;
     }
-    this.send({ type: 'room:join', player: this.state.player, roomId: clean });
+    this.send({ type: 'room:join', roomId: clean });
   }
 
   public leaveRoom(): void {
     if (!this.state.room) return;
     this.send({
       type: 'room:leave',
-      playerId: this.state.player.playerId,
       roomId: this.state.room.roomId,
     });
   }
@@ -290,7 +323,6 @@ export class MiniGameOnlineClient {
     const currentReady = isSeat1 ? r.seat1.ready : r.seat2.ready;
     this.send({
       type: 'room:ready',
-      playerId: this.state.player.playerId,
       roomId: r.roomId,
       ready: !currentReady,
     });
@@ -301,13 +333,12 @@ export class MiniGameOnlineClient {
     if (!r) return;
     this.send({
       type: 'room:switch_to_seat',
-      player: this.state.player,
       roomId: r.roomId,
       seatNumber,
     });
   }
 
   public refreshLobby(): void {
-    this.send({ type: 'lobby:subscribe', player: this.state.player });
+    this.send({ type: 'lobby:subscribe' });
   }
 }

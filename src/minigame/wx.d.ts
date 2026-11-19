@@ -75,6 +75,10 @@ export interface WxGlobal {
   }): void;
   setClipboardData(opts: { data: string; success?: () => void }): void;
   connectSocket(opts: { url: string }): WxSocketTask;
+  cloud: {
+    init(opts: { env: string }): void;
+    callFunction(opts: { name: string; data?: Record<string, unknown> }): Promise<{ result?: unknown }>;
+  };
   createWebAudioContext?(): AudioContext;
   onShareAppMessage?(cb: () => { title: string; query?: string }): void;
   shareAppMessage?(opts: { title: string; query?: string }): void;

@@ -25,6 +25,11 @@ export interface PlayerIdentity {
   nickname: string;
 }
 
+export interface AuthenticatedPlayer {
+  playerId: string;
+  nickname: string;
+}
+
 export interface SeatState {
   seatNumber: 1 | 2;
   playerId: string | null;
@@ -141,22 +146,21 @@ export interface SanitizedRoomState {
 // ---------------- WebSocket Protocol ----------------
 
 export type ClientToServerMessage =
-  | { type: 'lobby:subscribe'; player: PlayerIdentity }
+  | { type: 'auth:login'; token: string }
+  | { type: 'lobby:subscribe' }
   | {
       type: 'room:create';
-      player: PlayerIdentity;
       gameType: OnlineGameType;
       junqiSubMode?: JunqiSubMode;
       isPublic: boolean;
       roomName?: string;
     }
-  | { type: 'room:join'; player: PlayerIdentity; roomId: string }
-  | { type: 'room:leave'; playerId: string; roomId: string }
-  | { type: 'room:ready'; playerId: string; roomId: string; ready: boolean }
-  | { type: 'room:switch_to_seat'; player: PlayerIdentity; roomId: string; seatNumber: 1 | 2 }
+  | { type: 'room:join'; roomId: string }
+  | { type: 'room:leave'; roomId: string }
+  | { type: 'room:ready'; roomId: string; ready: boolean }
+  | { type: 'room:switch_to_seat'; roomId: string; seatNumber: 1 | 2 }
   | {
       type: 'game:move';
-      playerId: string;
       roomId: string;
       payload:
         | { kind: 'GOMOKU'; r: number; c: number }
@@ -164,16 +168,19 @@ export type ClientToServerMessage =
         | { kind: 'JUNQI_FLIP'; r: number; c: number }
         | { kind: 'JUNQI_MOVE'; from: Coord; to: Coord };
     }
-  | { type: 'junqi:swap_setup'; playerId: string; roomId: string; c1: Coord; c2: Coord }
-  | { type: 'junqi:preset_setup'; playerId: string; roomId: string; preset: 'BALANCED' | 'FORTRESS' }
-  | { type: 'junqi:confirm_setup'; playerId: string; roomId: string }
-  | { type: 'game:request_action'; playerId: string; roomId: string; action: 'UNDO' | 'DRAW' }
-  | { type: 'game:respond_action'; playerId: string; roomId: string; accept: boolean }
-  | { type: 'game:resign'; playerId: string; roomId: string }
-  | { type: 'game:rematch'; playerId: string; roomId: string }
-  | { type: 'chat:send'; playerId: string; roomId: string; text: string };
+  | { type: 'junqi:swap_setup'; roomId: string; c1: Coord; c2: Coord }
+  | { type: 'junqi:preset_setup'; roomId: string; preset: 'BALANCED' | 'FORTRESS' }
+  | { type: 'junqi:confirm_setup'; roomId: string }
+  | { type: 'game:request_action'; roomId: string; action: 'UNDO' | 'DRAW' }
+  | { type: 'game:respond_action'; roomId: string; accept: boolean }
+  | { type: 'game:resign'; roomId: string }
+  | { type: 'game:rematch'; roomId: string }
+  | { type: 'chat:send'; roomId: string; text: string }
+  | { type: 'profile:update'; nickname: string };
 
 export type ServerToClientMessage =
+  | { type: 'auth:ok'; player: AuthenticatedPlayer; expiresAt: number }
+  | { type: 'auth:error'; message: string }
   | { type: 'lobby:rooms_update'; rooms: PublicRoomSummary[]; onlineUsers: number }
   | { type: 'room:joined'; roomId: string; state: SanitizedRoomState }
   | { type: 'room:state_sync'; state: SanitizedRoomState }

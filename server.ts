@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import type {
   ChatMessage,
@@ -42,6 +43,8 @@ interface ClientSession {
   ws: WebSocket;
   playerId: string;
   nickname: string;
+  authenticated: boolean;
+  authExpiresAt: number;
   currentRoomId: string | null;
   inLobby: boolean;
 }
@@ -97,6 +100,40 @@ function nowTimeStr(): string {
 function sendToWs(ws: WebSocket, msg: ServerToClientMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
+  }
+}
+
+interface OnlineTokenPayload {
+  sub: string;
+  nickname: string;
+  exp: number;
+  aud: 'yayi-online';
+}
+
+function verifyOnlineToken(token: string): OnlineTokenPayload | null {
+  const secret = process.env.ONLINE_AUTH_SECRET;
+  const [header, body, signature, ...extra] = token.split('.');
+  if (!secret || !header || !body || !signature || extra.length) return null;
+  const expected = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+  if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<OnlineTokenPayload>;
+    if (
+      typeof payload.sub !== 'string' || !payload.sub ||
+      typeof payload.nickname !== 'string' ||
+      typeof payload.exp !== 'number' || payload.exp <= Date.now() ||
+      payload.aud !== 'yayi-online'
+    ) return null;
+    return {
+      sub: payload.sub,
+      nickname: payload.nickname.trim().slice(0, 16) || '棋友',
+      exp: payload.exp,
+      aud: 'yayi-online',
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -349,10 +386,30 @@ function tryStartMatchIfBothReady(room: ServerRoom): void {
 }
 
 function handleMessage(session: ClientSession, msg: ClientToServerMessage): void {
+  if (msg.type === 'auth:login') {
+    const token = verifyOnlineToken(msg.token);
+    if (!token) {
+      sendToWs(session.ws, { type: 'auth:error', message: '微信身份验证已失效，请重新登录' });
+      return;
+    }
+    session.playerId = token.sub;
+    session.nickname = token.nickname;
+    session.authenticated = true;
+    session.authExpiresAt = token.exp;
+    sendToWs(session.ws, {
+      type: 'auth:ok',
+      player: { playerId: session.playerId, nickname: session.nickname },
+      expiresAt: token.exp,
+    });
+    return;
+  }
+  if (!session.authenticated || session.authExpiresAt <= Date.now()) {
+    session.authenticated = false;
+    sendToWs(session.ws, { type: 'auth:error', message: '请先完成微信身份登录' });
+    return;
+  }
   switch (msg.type) {
     case 'lobby:subscribe': {
-      session.playerId = msg.player.playerId;
-      session.nickname = msg.player.nickname.trim().slice(0, 16) || '雅弈客';
       session.inLobby = true;
       sendToWs(session.ws, {
         type: 'lobby:rooms_update',
@@ -363,8 +420,6 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     }
 
     case 'room:create': {
-      session.playerId = msg.player.playerId;
-      session.nickname = msg.player.nickname.trim().slice(0, 16) || '雅弈客';
       if (session.currentRoomId) {
         detachPlayerFromRoom(session, true);
       }
@@ -418,8 +473,6 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     }
 
     case 'room:join': {
-      session.playerId = msg.player.playerId;
-      session.nickname = msg.player.nickname.trim().slice(0, 16) || '雅弈客';
       const targetId = msg.roomId.trim().toUpperCase();
       const room = rooms.get(targetId);
       if (!room) {
@@ -498,20 +551,20 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
         return;
       }
       // Vacate previous seat or spectator entry
-      if (room.seat1.playerId === msg.player.playerId) {
+      if (room.seat1.playerId === session.playerId) {
         room.seat1 = { seatNumber: 1, playerId: null, nickname: null, connected: false, ready: false, setupConfirmed: false };
-      } else if (room.seat2.playerId === msg.player.playerId) {
+      } else if (room.seat2.playerId === session.playerId) {
         room.seat2 = { seatNumber: 2, playerId: null, nickname: null, connected: false, ready: false, setupConfirmed: false };
       } else {
-        room.spectators.delete(msg.player.playerId);
+        room.spectators.delete(session.playerId);
       }
 
-      targetSeat.playerId = msg.player.playerId;
-      targetSeat.nickname = msg.player.nickname;
+      targetSeat.playerId = session.playerId;
+      targetSeat.nickname = session.nickname;
       targetSeat.connected = true;
       targetSeat.ready = false;
       targetSeat.setupConfirmed = false;
-      addSystemChat(room, `${msg.player.nickname} 入座第 ${msg.seatNumber} 席`);
+      addSystemChat(room, `${session.nickname} 入座第 ${msg.seatNumber} 席`);
       broadcastRoomState(room);
       broadcastLobbyUpdate();
       break;
@@ -520,9 +573,9 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'room:ready': {
       const room = rooms.get(msg.roomId);
       if (!room || room.status !== 'WAITING') return;
-      if (room.seat1.playerId === msg.playerId) {
+      if (room.seat1.playerId === session.playerId) {
         room.seat1.ready = msg.ready;
-      } else if (room.seat2.playerId === msg.playerId) {
+      } else if (room.seat2.playerId === session.playerId) {
         room.seat2.ready = msg.ready;
       } else {
         return;
@@ -536,7 +589,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'junqi:swap_setup': {
       const room = rooms.get(msg.roomId);
       if (!room || room.gameType !== 'JUNQI' || room.status !== 'DEPLOYING' || !room.junqi) return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
       const side: JunqiSide = role === 'SEAT_1' ? 'RED' : 'BLUE';
       const seat = role === 'SEAT_1' ? room.seat1 : room.seat2;
@@ -558,7 +611,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'junqi:preset_setup': {
       const room = rooms.get(msg.roomId);
       if (!room || room.gameType !== 'JUNQI' || room.status !== 'DEPLOYING' || !room.junqi) return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
       const side: JunqiSide = role === 'SEAT_1' ? 'RED' : 'BLUE';
       const seat = role === 'SEAT_1' ? room.seat1 : room.seat2;
@@ -576,10 +629,10 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'junqi:confirm_setup': {
       const room = rooms.get(msg.roomId);
       if (!room || room.gameType !== 'JUNQI' || room.status !== 'DEPLOYING' || !room.junqi) return;
-      if (room.seat1.playerId === msg.playerId) {
+      if (room.seat1.playerId === session.playerId) {
         room.seat1.setupConfirmed = true;
         addSystemChat(room, `${room.seat1.nickname}（红方）已完成排兵布阵`);
-      } else if (room.seat2.playerId === msg.playerId) {
+      } else if (room.seat2.playerId === session.playerId) {
         room.seat2.setupConfirmed = true;
         addSystemChat(room, `${room.seat2.nickname}（蓝方）已完成排兵布阵`);
       }
@@ -597,13 +650,13 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'game:move': {
       const room = rooms.get(msg.roomId);
       if (!room || room.status !== 'PLAYING') return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') {
         sendToWs(session.ws, { type: 'room:error', message: '观战者不可操作棋盘' });
         return;
       }
 
-      const actorLabel = getRoleLabel(room, msg.playerId);
+      const actorLabel = getRoleLabel(room, session.playerId);
       const p = msg.payload;
 
       if (p.kind === 'GOMOKU' && room.gameType === 'GOMOKU' && room.gomoku) {
@@ -704,7 +757,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'game:request_action': {
       const room = rooms.get(msg.roomId);
       if (!room || room.status !== 'PLAYING') return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
       if (room.pendingRequest) {
         sendToWs(session.ws, { type: 'room:error', message: '已有待回应的协商请求' });
@@ -734,7 +787,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'game:respond_action': {
       const room = rooms.get(msg.roomId);
       if (!room || !room.pendingRequest) return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
       const mySeat: 1 | 2 = role === 'SEAT_1' ? 1 : 2;
       if (mySeat === room.pendingRequest.fromSeat) return; // Only opponent can respond
@@ -779,10 +832,10 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'game:resign': {
       const room = rooms.get(msg.roomId);
       if (!room || (room.status !== 'PLAYING' && room.status !== 'DEPLOYING')) return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
 
-      const loserLabel = getRoleLabel(room, msg.playerId);
+      const loserLabel = getRoleLabel(room, session.playerId);
       room.status = 'FINISHED';
       room.pendingRequest = null;
 
@@ -804,7 +857,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     case 'game:rematch': {
       const room = rooms.get(msg.roomId);
       if (!room || room.status !== 'FINISHED') return;
-      const role = getViewerRole(room, msg.playerId);
+      const role = getViewerRole(room, session.playerId);
       if (role === 'SPECTATOR') return;
 
       buildInitialGameStateForRoom(room);
@@ -819,6 +872,25 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
       );
       broadcastRoomState(room);
       broadcastLobbyUpdate();
+      break;
+    }
+
+    case 'profile:update': {
+      const nickname = msg.nickname.trim().slice(0, 16);
+      if (!nickname) {
+        sendToWs(session.ws, { type: 'room:error', message: '昵称不能为空' });
+        return;
+      }
+      session.nickname = nickname;
+      const room = session.currentRoomId ? rooms.get(session.currentRoomId) : undefined;
+      if (room) {
+        if (room.seat1.playerId === session.playerId) room.seat1.nickname = nickname;
+        if (room.seat2.playerId === session.playerId) room.seat2.nickname = nickname;
+        const spectator = room.spectators.get(session.playerId);
+        if (spectator) spectator.nickname = nickname;
+        broadcastRoomState(room);
+        broadcastLobbyUpdate();
+      }
       break;
     }
 
@@ -854,8 +926,10 @@ async function startServer() {
   wss.on('connection', (ws) => {
     const session: ClientSession = {
       ws,
-      playerId: `anon-${Math.random().toString(36).slice(2, 9)}`,
+      playerId: '',
       nickname: '雅弈访客',
+      authenticated: false,
+      authExpiresAt: 0,
       currentRoomId: null,
       inLobby: false,
     };

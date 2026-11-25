@@ -1,49 +1,71 @@
-# 微信云开发身份认证与联机部署
+# 微信云开发身份认证与免域名云托管联机部署
 
-本项目的联机功能仅允许通过当前微信小游戏 AppID 认证的用户连接。网页端账号、网页服务和客户端自报的 `playerId` 都不会参与认证。
+本分支的联机功能**无需购买任何域名、无需域名 ICP 备案、无需配置 Socket 合法域名、也无需开启云托管公网访问**，所有玩家在微信小游戏正式版中均可通过微信内网专有通道直接联机。
 
-## 身份链路
+## 身份与通信链路
 
 ```text
 小游戏 wx.cloud.callFunction('authLogin')
-  -> 云函数从 getWXContext() 取得 OPENID
-  -> users 集合查找或创建游戏用户
-  -> 使用 ONLINE_AUTH_SECRET 签发 30 分钟在线令牌
-  -> 小游戏以 auth:login 首帧发送令牌
-  -> 云托管 WebSocket 验签并把用户绑定到当前连接
+  -> 云函数从 getWXContext() 取得微信 OPENID
+  -> 云数据库 users 集合查找或创建玩家记录
+  -> 使用 ONLINE_AUTH_SECRET 签发 30 分钟短期令牌
+  -> 小游戏调用 wx.cloud.connectContainer() 通过微信内网直连云托管容器 (/ws)
+  -> 首帧发送 auth:login 令牌
+  -> 云托管 WebSocket 验签并把真实身份绑定到当前连接
 ```
 
-WebSocket 服务只从已验证的连接会话读取用户 ID 和昵称。建房、入座、走棋、认输、聊天等后续消息均不包含用户 ID，客户端无法冒充其他玩家。
+WebSocket 服务只从已验签会话读取用户 ID 与昵称；建房、入座、走棋、认输、聊天等后续消息均不含客户端自报 ID，客户端无法伪造其他玩家。
 
-## 一次性配置
+## 完整部署流程（全程免域名）
 
-1. 在微信开发者工具中开通云开发环境，并记下环境 ID。
-2. 编辑 `src/minigame/cloudConfig.ts`：
+### 1. 生成 32 位以上随机密钥 `ONLINE_AUTH_SECRET`
+自行生成一串至少 32 位的随机字母数字字符串（例如用 `openssl rand -hex 24` 生成 48 位十六进制字符）。
+> **切勿写入小游戏代码或提交到 Git**，只填在「云函数环境变量」和「云托管服务环境变量」两处，且两边必须完全一致。
 
+### 2. 开通微信云开发 & 创建 `users` 集合
+1. 用 **微信开发者工具** 导入本项目根目录（根目录 `project.config.json` 已同时配置 `miniprogramRoot: "dist/"` 和 `cloudfunctionRoot: "cloudfunctions/"`）。
+2. 点击顶部 **「云开发」** 开通云开发环境，记下 **云开发环境 ID**（如 `cloud1-xxxx`）。
+3. 进入云开发控制台 → **数据库** → 新建集合 **`users`**。
+4. 将 `users` 集合权限改为 **「仅管理端可读写 / 禁止客户端读写」**（所有读写由云函数代理，保护 `openId` 不泄露）。
+
+### 3. 部署 `authLogin` 云函数
+1. 在微信开发者工具左侧目录找到 `cloudfunctions/authLogin`，右键选择 **「上传并部署：云端安装依赖」**。
+2. 进入云开发控制台 → **云函数 → `authLogin` → 函数配置 → 环境变量**，添加：
+   - Key：`ONLINE_AUTH_SECRET`
+   - Value：第 1 步生成的 32+ 位密钥
+
+### 4. 部署微信云托管 WebSocket 服务（免公网域名）
+1. 在微信公众平台或微信开发者工具开通 **微信云托管**，记下 **云托管环境 ID**（如 `prod-xxxx`，若与云开发为同一环境可复用）。
+2. 进入云托管控制台 → **服务管理 → 新建服务**：
+   - **服务名称**：建议填 **`yayi-server`**（需与 `src/minigame/cloudConfig.ts` 中的 `CLOUDRUN_SERVICE_NAME` 保持一致）
+   - **代码源**：绑定本仓库的 **`feat/wechat-cloud-auth-online`** 分支（或上传本地代码包，根目录已内置 `Dockerfile`）
+   - **监听端口**：`3000`
+   - **健康检查路径**：`/api/health`
+   - **最小实例数**：正式上线建议设为 **`1`**（避免无人时缩容导致内存中的房间清空或首连慢）
+   - **公网访问**：**可以保持关闭**（小游戏走 `wx.cloud.connectContainer` 内网专有通道，不依赖测试域名或备案域名）
+   - **环境变量**：添加 `ONLINE_AUTH_SECRET`（与第 3 步云函数里填的**完全一致**）
+3. 点击 **发布**，等待部署状态变为「运行中」。
+
+### 5. 填入配置并打包小游戏
+1. 编辑 `src/minigame/cloudConfig.ts`：
    ```ts
    export const CLOUD_ENV_ID = '你的云开发环境 ID';
-   export const ONLINE_WSS_URL = 'wss://云托管服务域名/ws';
+   export const CLOUDRUN_ENV_ID = '你的云托管环境 ID（若与上面相同可留空 ""）';
+   export const CLOUDRUN_SERVICE_NAME = 'yayi-server';
+   export const CLOUDRUN_WS_PATH = '/ws';
    ```
+2. 执行类型检查与打包：
+   ```bash
+   npm install
+   npm run lint
+   npm run build:minigame
+   ```
+3. **无需在微信公众平台配置任何 `socket` / `request` 合法域名**，直接在开发者工具测试联机，确认基础库版本 `>= 2.21.1`（建议 `3.5.5+`）。
 
-3. 在云开发控制台创建数据库集合 `users`。初版字段为：`openId`、`nickname`、`createdAt`、`lastLoginAt`。
-4. 将 `cloudfunctions/authLogin/` 部署为名为 `authLogin` 的云函数，并为它配置环境变量 `ONLINE_AUTH_SECRET`。
-5. 使用同一个 `ONLINE_AUTH_SECRET` 配置云托管服务的环境变量。该值至少 32 个随机字符，绝不能写入小游戏代码、Git 或客户端配置。
-6. 使用仓库根目录 `Dockerfile` 部署云托管服务。服务会读取平台提供的 `PORT`，健康检查为 `/api/health`，WebSocket 路径为 `/ws`。
-7. 在小游戏后台把云托管域名加入 Socket 合法域名。正式版必须使用 `wss://`。
-
-## 数据库权限
-
-不要为 `users` 开放客户端读写权限。`openId` 仅由云函数读取和写入；客户端只应获得云函数返回的内部用户 ID、展示昵称和短期令牌。
-
-## 发布前检查
-
-```powershell
-npm.cmd run lint
-npm.cmd run build:minigame
-```
-
-在两台真实微信设备上验证：首次进入联机大厅、创建/加入同一房间、聊天、走棋、断线重连。令牌有效期为 30 分钟，断线重连时客户端会重新调用云函数换取新令牌。
+### 6. 真机验证与正式上线
+1. 在微信开发者工具点击 **「上传」**，在微信公众平台设为 **体验版**。
+2. 用两台真实微信手机扫码验证：自动完成微信身份认证 → 进入联机大厅 → 创建并加入同一房间 → 走棋 / 聊天 / 断线重连。
+3. 在微信公众平台完成免费的 **小程序备案**（不涉及域名）与小游戏自审材料后，即可点击 **提交审核 → 正式发布**，让所有微信用户免域名直接联机游玩。
 
 ## 运行边界
-
-当前房间状态仍保存在云托管实例内存中，适合单实例试玩。服务重启会清空房间；扩容为多实例前，应将房间状态和登录会话迁移到 Redis，并将战绩/棋谱保存到云开发数据库。
+当前房间状态保存在云托管单实例内存中，适合单实例运行（数百人同时在线）。如需水平扩容为多实例，应将房间状态迁移到 Redis，并将战绩与棋谱写入云开发数据库。

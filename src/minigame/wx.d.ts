@@ -78,6 +78,12 @@ export interface WxGlobal {
   cloud: {
     init(opts: { env: string }): void;
     callFunction(opts: { name: string; data?: Record<string, unknown> }): Promise<{ result?: unknown }>;
+    connectContainer(opts: {
+      config: { env: string };
+      service: string;
+      path: string;
+      header?: Record<string, string>;
+    }): Promise<{ socketTask: WxSocketTask }>;
   };
   createWebAudioContext?(): AudioContext;
   onShareAppMessage?(cb: () => { title: string; query?: string }): void;

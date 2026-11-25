@@ -17,10 +17,13 @@ let initialized = false;
 
 export async function loginWithWeChat(): Promise<CloudAuthSession> {
   if (!isCloudConfigReady()) {
-    throw new Error('联机服务尚未配置云开发环境和云托管 WSS 地址');
+    throw new Error('联机服务尚未配置云开发环境 ID 与云托管服务名');
+  }
+  if (!wx.cloud || typeof wx.cloud.callFunction !== 'function') {
+    throw new Error('当前微信基础库不支持云开发，请升级基础库');
   }
   if (!initialized) {
-    wx.cloud.init({ env: CLOUD_ENV_ID });
+    wx.cloud.init({ env: CLOUD_ENV_ID.trim() });
     initialized = true;
   }
 

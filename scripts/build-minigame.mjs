@@ -16,8 +16,9 @@ function copyStaticAssets() {
   const rootProjConfig = JSON.parse(
     fs.readFileSync(path.join(rootDir, 'project.config.json'), 'utf-8')
   );
+  const { cloudfunctionRoot: _omitCloudFn, ...distBaseConfig } = rootProjConfig;
   const distProjConfig = {
-    ...rootProjConfig,
+    ...distBaseConfig,
     miniprogramRoot: './',
   };
   fs.writeFileSync(

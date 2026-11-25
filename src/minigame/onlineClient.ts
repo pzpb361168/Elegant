@@ -13,7 +13,12 @@ import {
   showToast,
 } from './platform.ts';
 import { loginWithWeChat } from './cloudAuth.ts';
-import { ONLINE_WSS_URL } from './cloudConfig.ts';
+import {
+  CLOUDRUN_SERVICE_NAME,
+  CLOUDRUN_WS_PATH,
+  getCloudRunEnvId,
+  getCloudRunTargetLabel,
+} from './cloudConfig.ts';
 import { soundFX } from './sound.ts';
 
 export type WsConnStatus = 'DISCONNECTED' | 'AUTHENTICATING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
@@ -35,6 +40,7 @@ export class MiniGameOnlineClient {
   private socket: WxSocketTask | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private connectSeq = 0;
   private authenticationInFlight = false;
   private active = false;
   private onChange: () => void;
@@ -42,7 +48,7 @@ export class MiniGameOnlineClient {
   constructor(onChange: () => void) {
     this.onChange = onChange;
     this.state = {
-      wsUrl: ONLINE_WSS_URL,
+      wsUrl: getCloudRunTargetLabel(),
       connStatus: 'DISCONNECTED',
       player: { playerId: '', nickname: '微信棋友' },
       publicRooms: [],
@@ -62,6 +68,7 @@ export class MiniGameOnlineClient {
 
   public stop(): void {
     this.active = false;
+    this.connectSeq++;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -91,9 +98,9 @@ export class MiniGameOnlineClient {
     this.onChange();
   }
 
-  /** The production endpoint is fixed at build time; keep UI compatibility without accepting arbitrary hosts. */
+  /** The production CloudRun container endpoint is fixed at build time. */
   public updateWsUrl(_nextUrl: string): void {
-    showToast('正式版联机服务地址不可修改');
+    showToast('正式版已固定走微信云托管内网通道');
   }
 
   public reconnectNow(): void {
@@ -104,6 +111,7 @@ export class MiniGameOnlineClient {
   }
 
   private closeSocket(): void {
+    this.connectSeq++;
     if (this.socket) {
       try {
         this.socket.close({ code: 1000, reason: 'client_reset' });
@@ -118,22 +126,23 @@ export class MiniGameOnlineClient {
   private connect(): void {
     if (!this.active) return;
     if (this.authenticationInFlight) return;
+    const attemptId = ++this.connectSeq;
     this.authenticationInFlight = true;
     this.state.connStatus = 'AUTHENTICATING';
     this.onChange();
 
-    void this.authenticateAndOpenSocket();
+    void this.authenticateAndOpenSocket(attemptId);
   }
 
-  private async authenticateAndOpenSocket(): Promise<void> {
+  private async authenticateAndOpenSocket(attemptId: number): Promise<void> {
     let token: string;
     try {
       const auth = await loginWithWeChat();
-      if (!this.active) return;
+      if (!this.active || this.connectSeq !== attemptId) return;
       token = auth.token;
       this.state.player = auth.player;
     } catch (err) {
-      if (!this.active) return;
+      if (!this.active || this.connectSeq !== attemptId) return;
       this.state.connStatus = 'ERROR';
       showToast(err instanceof Error ? err.message : '微信身份认证失败');
       this.scheduleReconnect();
@@ -143,16 +152,40 @@ export class MiniGameOnlineClient {
       this.authenticationInFlight = false;
     }
 
+    if (!wx.cloud || typeof wx.cloud.connectContainer !== 'function') {
+      this.state.connStatus = 'ERROR';
+      showToast('当前微信基础库不支持云托管内网连接，请升级基础库');
+      this.scheduleReconnect();
+      this.onChange();
+      return;
+    }
+
     this.state.connStatus = 'CONNECTING';
     this.onChange();
 
     let task: WxSocketTask;
     try {
-      task = wx.connectSocket({ url: this.state.wsUrl });
+      const res = await wx.cloud.connectContainer({
+        config: { env: getCloudRunEnvId() },
+        service: CLOUDRUN_SERVICE_NAME,
+        path: CLOUDRUN_WS_PATH,
+      });
+      task = res.socketTask;
     } catch {
+      if (!this.active || this.connectSeq !== attemptId) return;
       this.state.connStatus = 'ERROR';
+      showToast('连接微信云托管容器失败，请稍后重试');
       this.scheduleReconnect();
       this.onChange();
+      return;
+    }
+
+    if (!this.active || this.connectSeq !== attemptId) {
+      try {
+        task.close({ code: 1000, reason: 'stale_connect' });
+      } catch {
+        // Ignore
+      }
       return;
     }
 

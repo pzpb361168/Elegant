@@ -107,6 +107,7 @@ npm run server
 - WebSocket 联机端点：`/ws`
 - 开发者工具模拟器默认连接 `ws://127.0.0.1:3000/ws`；真机预览时请在大厅点击「服务端地址」改为本机局域网 `ws://你的IP:3000/ws` 或正式 `wss://` 域名。
 
-### 微信云开发认证联机
+### 微信云开发认证 + 免域名云托管联机
 
-联机版已经改为仅接受微信小游戏云开发身份认证：小游戏调用 `authLogin` 云函数获取短期令牌，再连接云托管 WebSocket。服务端不会信任客户端提交的玩家 ID 或昵称。完整配置、密钥管理和云托管部署步骤见 [docs/wechat-cloud-auth-deployment.md](docs/wechat-cloud-auth-deployment.md)。
+本分支联机版仅接受微信小游戏云开发身份认证，并通过 `wx.cloud.connectContainer` 微信内网专有通道连接云托管 WebSocket（**全程无需域名、无需域名 ICP 备案、无需配置 socket 合法域名**）。完整配置、密钥管理和云托管部署步骤见 [docs/wechat-cloud-auth-deployment.md](docs/wechat-cloud-auth-deployment.md)。
+

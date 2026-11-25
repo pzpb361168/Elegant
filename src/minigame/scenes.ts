@@ -1255,13 +1255,15 @@ export class MiniGameApp {
     const statusLabel =
       os.connStatus === 'CONNECTED'
         ? `已连接 · 在线 ${os.onlineUsers} 人`
+        : os.connStatus === 'AUTHENTICATING'
+        ? '正在进行微信身份认证…'
         : os.connStatus === 'CONNECTING'
-        ? '正在连接联机服务端…'
-        : '未连接（请先启动 npm run server 或核对地址）';
+        ? '正在连接微信云托管联机服务…'
+        : '未连接（请核对云开发与云托管服务配置）';
     const statusColor =
       os.connStatus === 'CONNECTED'
         ? PALETTE.teal
-        : os.connStatus === 'CONNECTING'
+        : os.connStatus === 'AUTHENTICATING' || os.connStatus === 'CONNECTING'
         ? PALETTE.gold
         : PALETTE.cinnabar;
 
@@ -1281,7 +1283,7 @@ export class MiniGameApp {
     );
     y += 40;
 
-    // Player Identity + WS URL Card
+    // Player Identity + CloudRun Channel Card
     fillRoundRect(ctx, r.x, y, r.w, 66, 8, PALETTE.bgCard, PALETTE.lineHairline, 1);
     drawEllipsisText(
       ctx,
@@ -1308,31 +1310,24 @@ export class MiniGameApp {
 
     drawEllipsisText(
       ctx,
-      `服务地址：${os.wsUrl}`,
+      `云托管通道：${os.wsUrl}`,
       r.x + 10,
       y + 47,
       r.w - 88,
       PALETTE.inkMuted,
       '500 10px monospace'
     );
-    drawButton(
+    fillRoundRect(ctx, r.x + r.w - 72, y + 36, 64, 22, 6, PALETTE.bgPanel, PALETTE.lineHairline, 1);
+    drawEllipsisText(
       ctx,
-      this.ui,
-      'ol-wsurl',
-      { x: r.x + r.w - 72, y: y + 35, w: 64, h: 24 },
-      '设地址',
-      () => {
-        promptEditableModal(
-          '配置 WebSocket 地址',
-          os.wsUrl,
-          '如 ws://192.168.1.100:3000/ws',
-          (val) => {
-            this.online.updateWsUrl(val);
-            showToast('已更新服务地址');
-          }
-        );
-      },
-      { fontSize: 10 }
+      '内网免域名',
+      r.x + r.w - 40,
+      y + 47,
+      60,
+      PALETTE.teal,
+      '600 9px sans-serif',
+      'center',
+      'middle'
     );
     y += 74;
 

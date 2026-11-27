@@ -3,6 +3,7 @@ import http from 'http';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import type {
+  AuthProfileStatus,
   ChatMessage,
   ClientToServerMessage,
   GomokuOnlineBoardState,
@@ -11,7 +12,6 @@ import type {
   OnlineGameType,
   OnlineMoveLog,
   PendingRequest,
-  PlayerIdentity,
   PublicRoomSummary,
   RoomStatus,
   SanitizedRoomState,
@@ -43,6 +43,8 @@ interface ClientSession {
   ws: WebSocket;
   playerId: string;
   nickname: string;
+  avatarUrl: string;
+  authStatus: AuthProfileStatus;
   authenticated: boolean;
   authExpiresAt: number;
   currentRoomId: string | null;
@@ -106,8 +108,23 @@ function sendToWs(ws: WebSocket, msg: ServerToClientMessage): void {
 interface OnlineTokenPayload {
   sub: string;
   nickname: string;
+  avatarUrl: string;
+  authStatus: AuthProfileStatus;
   exp: number;
   aud: 'yayi-online';
+}
+
+function sanitizeAvatarUrl(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 512 || /[\s\u0000-\u001F]/.test(trimmed)) return '';
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
 }
 
 function verifyOnlineToken(token: string): OnlineTokenPayload | null {
@@ -129,6 +146,8 @@ function verifyOnlineToken(token: string): OnlineTokenPayload | null {
     return {
       sub: payload.sub,
       nickname: payload.nickname.trim().slice(0, 16) || '棋友',
+      avatarUrl: sanitizeAvatarUrl(payload.avatarUrl),
+      authStatus: payload.authStatus === 'AUTHORIZED' ? 'AUTHORIZED' : 'GUEST_ALIAS',
       exp: payload.exp,
       aud: 'yayi-online',
     };
@@ -294,6 +313,7 @@ function detachPlayerFromRoom(session: ClientSession, explicitLeave: boolean): v
         seatNumber: 1,
         playerId: null,
         nickname: null,
+        avatarUrl: undefined,
         connected: false,
         ready: false,
         setupConfirmed: false,
@@ -308,6 +328,7 @@ function detachPlayerFromRoom(session: ClientSession, explicitLeave: boolean): v
         seatNumber: 2,
         playerId: null,
         nickname: null,
+        avatarUrl: undefined,
         connected: false,
         ready: false,
         setupConfirmed: false,
@@ -333,6 +354,7 @@ function detachPlayerFromRoom(session: ClientSession, explicitLeave: boolean): v
       seatNumber: 2,
       playerId: null,
       nickname: null,
+      avatarUrl: undefined,
       connected: false,
       ready: false,
       setupConfirmed: false,
@@ -394,11 +416,18 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     }
     session.playerId = token.sub;
     session.nickname = token.nickname;
+    session.avatarUrl = token.avatarUrl;
+    session.authStatus = token.authStatus;
     session.authenticated = true;
     session.authExpiresAt = token.exp;
     sendToWs(session.ws, {
       type: 'auth:ok',
-      player: { playerId: session.playerId, nickname: session.nickname },
+      player: {
+        playerId: session.playerId,
+        nickname: session.nickname,
+        avatarUrl: session.avatarUrl || undefined,
+        authStatus: session.authStatus,
+      },
       expiresAt: token.exp,
     });
     return;
@@ -440,6 +469,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
           seatNumber: 1,
           playerId: session.playerId,
           nickname: session.nickname,
+          avatarUrl: session.avatarUrl || undefined,
           connected: true,
           ready: true, // Host defaults to ready
           setupConfirmed: false,
@@ -448,6 +478,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
           seatNumber: 2,
           playerId: null,
           nickname: null,
+          avatarUrl: undefined,
           connected: false,
           ready: false,
           setupConfirmed: false,
@@ -491,14 +522,17 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
       if (room.seat1.playerId === session.playerId) {
         room.seat1.connected = true;
         room.seat1.nickname = session.nickname;
+        room.seat1.avatarUrl = session.avatarUrl || undefined;
       } else if (room.seat2.playerId === session.playerId) {
         room.seat2.connected = true;
         room.seat2.nickname = session.nickname;
+        room.seat2.avatarUrl = session.avatarUrl || undefined;
       } else if (!room.seat1.playerId && room.status === 'WAITING') {
         room.seat1 = {
           seatNumber: 1,
           playerId: session.playerId,
           nickname: session.nickname,
+          avatarUrl: session.avatarUrl || undefined,
           connected: true,
           ready: false,
           setupConfirmed: false,
@@ -509,6 +543,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
           seatNumber: 2,
           playerId: session.playerId,
           nickname: session.nickname,
+          avatarUrl: session.avatarUrl || undefined,
           connected: true,
           ready: false,
           setupConfirmed: false,
@@ -519,6 +554,7 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
         room.spectators.set(session.playerId, {
           playerId: session.playerId,
           nickname: session.nickname,
+          avatarUrl: session.avatarUrl || undefined,
           connected: true,
         });
         if (!existingSpec) {
@@ -552,15 +588,16 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
       }
       // Vacate previous seat or spectator entry
       if (room.seat1.playerId === session.playerId) {
-        room.seat1 = { seatNumber: 1, playerId: null, nickname: null, connected: false, ready: false, setupConfirmed: false };
+        room.seat1 = { seatNumber: 1, playerId: null, nickname: null, avatarUrl: undefined, connected: false, ready: false, setupConfirmed: false };
       } else if (room.seat2.playerId === session.playerId) {
-        room.seat2 = { seatNumber: 2, playerId: null, nickname: null, connected: false, ready: false, setupConfirmed: false };
+        room.seat2 = { seatNumber: 2, playerId: null, nickname: null, avatarUrl: undefined, connected: false, ready: false, setupConfirmed: false };
       } else {
         room.spectators.delete(session.playerId);
       }
 
       targetSeat.playerId = session.playerId;
       targetSeat.nickname = session.nickname;
+      targetSeat.avatarUrl = session.avatarUrl || undefined;
       targetSeat.connected = true;
       targetSeat.ready = false;
       targetSeat.setupConfirmed = false;
@@ -876,18 +913,35 @@ function handleMessage(session: ClientSession, msg: ClientToServerMessage): void
     }
 
     case 'profile:update': {
-      const nickname = msg.nickname.trim().slice(0, 16);
+      const nickname = typeof msg.nickname === 'string' ? msg.nickname.trim().slice(0, 16) : '';
       if (!nickname) {
         sendToWs(session.ws, { type: 'room:error', message: '昵称不能为空' });
         return;
       }
+      if (typeof msg.avatarUrl === 'string' && msg.avatarUrl.trim() !== '') {
+        const cleanAvatar = sanitizeAvatarUrl(msg.avatarUrl);
+        if (!cleanAvatar) {
+          sendToWs(session.ws, { type: 'room:error', message: '头像地址无效' });
+          return;
+        }
+        session.avatarUrl = cleanAvatar;
+      }
       session.nickname = nickname;
       const room = session.currentRoomId ? rooms.get(session.currentRoomId) : undefined;
       if (room) {
-        if (room.seat1.playerId === session.playerId) room.seat1.nickname = nickname;
-        if (room.seat2.playerId === session.playerId) room.seat2.nickname = nickname;
+        if (room.seat1.playerId === session.playerId) {
+          room.seat1.nickname = nickname;
+          room.seat1.avatarUrl = session.avatarUrl || undefined;
+        }
+        if (room.seat2.playerId === session.playerId) {
+          room.seat2.nickname = nickname;
+          room.seat2.avatarUrl = session.avatarUrl || undefined;
+        }
         const spectator = room.spectators.get(session.playerId);
-        if (spectator) spectator.nickname = nickname;
+        if (spectator) {
+          spectator.nickname = nickname;
+          spectator.avatarUrl = session.avatarUrl || undefined;
+        }
         broadcastRoomState(room);
         broadcastLobbyUpdate();
       }
@@ -928,6 +982,8 @@ async function startServer() {
       ws,
       playerId: '',
       nickname: '雅弈访客',
+      avatarUrl: '',
+      authStatus: 'GUEST_ALIAS',
       authenticated: false,
       authExpiresAt: 0,
       currentRoomId: null,

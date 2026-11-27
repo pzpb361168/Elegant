@@ -20,20 +20,27 @@ export interface OnlineMoveLog {
   timestamp: string;
 }
 
+export type AuthProfileStatus = 'AUTHORIZED' | 'GUEST_ALIAS';
+
 export interface PlayerIdentity {
   playerId: string;
   nickname: string;
+  avatarUrl?: string;
+  authStatus?: AuthProfileStatus;
 }
 
 export interface AuthenticatedPlayer {
   playerId: string;
   nickname: string;
+  avatarUrl?: string;
+  authStatus?: AuthProfileStatus;
 }
 
 export interface SeatState {
   seatNumber: 1 | 2;
   playerId: string | null;
   nickname: string | null;
+  avatarUrl?: string;
   connected: boolean;
   ready: boolean;
   setupConfirmed: boolean; // Used in Junqi DEPLOY mode
@@ -42,6 +49,7 @@ export interface SeatState {
 export interface SpectatorInfo {
   playerId: string;
   nickname: string;
+  avatarUrl?: string;
   connected: boolean;
 }
 
@@ -176,7 +184,7 @@ export type ClientToServerMessage =
   | { type: 'game:resign'; roomId: string }
   | { type: 'game:rematch'; roomId: string }
   | { type: 'chat:send'; roomId: string; text: string }
-  | { type: 'profile:update'; nickname: string };
+  | { type: 'profile:update'; nickname: string; avatarUrl?: string };
 
 export type ServerToClientMessage =
   | { type: 'auth:ok'; player: AuthenticatedPlayer; expiresAt: number }

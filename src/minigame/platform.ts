@@ -5,6 +5,7 @@ const STATS_KEY = 'yayi_pavilion_stats_v1';
 const PLAYER_ID_KEY = 'yayi_online_player_id';
 const NICKNAME_KEY = 'yayi_online_nickname';
 const WS_URL_KEY = 'yayi_ws_server_url_v1';
+const ONLINE_AUTH_PROMPT_DONE_KEY = 'yayi_online_auth_prompt_done_v1';
 export const DEFAULT_WS_SERVER_URL = 'ws://127.0.0.1:3000/ws';
 
 const ORIENTAL_PREFIXES = ['松风', '竹影', '青衫', '听雨', '云水', '墨香', '清茶', '明月', '南山', '沧海'];
@@ -67,6 +68,14 @@ export function setStorage(key: string, val: string): void {
   } catch {
     // Ignore storage quota errors
   }
+}
+
+export function hasCompletedOnlineAuthPrompt(): boolean {
+  return getStorage(ONLINE_AUTH_PROMPT_DONE_KEY) === '1';
+}
+
+export function markOnlineAuthPromptCompleted(): void {
+  setStorage(ONLINE_AUTH_PROMPT_DONE_KEY, '1');
 }
 
 export function loadGameStats(): AllGameStats {

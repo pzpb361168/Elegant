@@ -8,11 +8,18 @@ import type {
   SanitizedRoomState,
   ServerToClientMessage,
 } from '../shared/onlineTypes.ts';
-import type { WxSocketTask } from './wx.d.ts';
+import type { WxSocketTask, WxUserInfo } from './wx.d.ts';
 import {
+  hasCompletedOnlineAuthPrompt,
+  markOnlineAuthPromptCompleted,
   showToast,
 } from './platform.ts';
-import { loginWithWeChat } from './cloudAuth.ts';
+import {
+  fetchExistingWeChatUserInfo,
+  loginWithWeChat,
+  updateCloudProfile,
+  type WeChatProfileSyncInput,
+} from './cloudAuth.ts';
 import {
   CLOUDRUN_SERVICE_NAME,
   CLOUDRUN_WS_PATH,
@@ -21,11 +28,18 @@ import {
 } from './cloudConfig.ts';
 import { soundFX } from './sound.ts';
 
-export type WsConnStatus = 'DISCONNECTED' | 'AUTHENTICATING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
+export type WsConnStatus =
+  | 'AUTH_GATE'
+  | 'DISCONNECTED'
+  | 'AUTHENTICATING'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'ERROR';
 
 export interface OnlineClientState {
   wsUrl: string;
   connStatus: WsConnStatus;
+  authBusy: boolean;
   player: PlayerIdentity;
   publicRooms: PublicRoomSummary[];
   onlineUsers: number;
@@ -50,7 +64,8 @@ export class MiniGameOnlineClient {
     this.state = {
       wsUrl: getCloudRunTargetLabel(),
       connStatus: 'DISCONNECTED',
-      player: { playerId: '', nickname: '微信棋友' },
+      authBusy: false,
+      player: { playerId: '', nickname: '微信棋友', authStatus: 'GUEST_ALIAS' },
       publicRooms: [],
       onlineUsers: 0,
       room: null,
@@ -61,9 +76,33 @@ export class MiniGameOnlineClient {
   }
 
   public start(): void {
-    if (this.active) return;
+    if (this.active && this.state.connStatus !== 'DISCONNECTED') return;
     this.active = true;
-    this.connect();
+    if (hasCompletedOnlineAuthPrompt()) {
+      this.connect();
+      return;
+    }
+    this.state.connStatus = 'AUTH_GATE';
+    this.onChange();
+    void this.trySilentRestoreIfAlreadyAuthorized();
+  }
+
+  private async trySilentRestoreIfAlreadyAuthorized(): Promise<void> {
+    const check = await fetchExistingWeChatUserInfo();
+    if (!this.active || this.state.connStatus !== 'AUTH_GATE' || this.state.authBusy) return;
+    if (!check.authorized) return;
+
+    markOnlineAuthPromptCompleted();
+    const rawNick = typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
+    const rawAvatar = typeof check.userInfo?.avatarUrl === 'string' ? check.userInfo.avatarUrl.trim() : '';
+    const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
+    const hasRealAvatar = rawAvatar.startsWith('https://');
+
+    this.connect({
+      nickName: hasRealNick ? rawNick : undefined,
+      avatarUrl: hasRealAvatar ? rawAvatar : undefined,
+      authStatus: hasRealNick || hasRealAvatar ? 'AUTHORIZED' : 'GUEST_ALIAS',
+    });
   }
 
   public stop(): void {
@@ -88,14 +127,107 @@ export class MiniGameOnlineClient {
     this.onChange();
   }
 
+  public async handleWeChatUserInfoTap(
+    userInfo: WxUserInfo | null,
+    fromLobbyReauth = false
+  ): Promise<void> {
+    if (this.state.authBusy) return;
+    this.active = true;
+    markOnlineAuthPromptCompleted();
+
+    const rawNick = typeof userInfo?.nickName === 'string' ? userInfo.nickName.trim() : '';
+    const rawAvatar = typeof userInfo?.avatarUrl === 'string' ? userInfo.avatarUrl.trim() : '';
+    const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
+    const hasRealAvatar = rawAvatar.startsWith('https://');
+    const gotRealWeChatProfile = hasRealNick || hasRealAvatar;
+
+    if (fromLobbyReauth) {
+      if (!userInfo) {
+        showToast('已取消微信授权，继续使用当前雅号');
+        return;
+      }
+      if (!gotRealWeChatProfile) {
+        showToast('微信返回默认资料，保留当前专属雅号');
+        return;
+      }
+
+      this.state.authBusy = true;
+      this.onChange();
+      try {
+        const auth = await updateCloudProfile({
+          nickName: hasRealNick ? rawNick : undefined,
+          avatarUrl: hasRealAvatar ? rawAvatar : undefined,
+          authStatus: 'AUTHORIZED',
+        });
+        this.state.player = auth.player;
+        if (this.state.connStatus === 'CONNECTED') {
+          this.send({
+            type: 'profile:update',
+            nickname: auth.player.nickname,
+            avatarUrl: auth.player.avatarUrl,
+          });
+        }
+        showToast('已同步微信头像与昵称', 'success');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : '同步微信资料失败');
+      } finally {
+        this.state.authBusy = false;
+        this.onChange();
+      }
+      return;
+    }
+
+    if (!userInfo) {
+      showToast('已为你分配专属雅号，大厅可随时重新授权');
+      this.connect({ authStatus: 'GUEST_ALIAS' });
+      return;
+    }
+
+    if (!gotRealWeChatProfile) {
+      showToast('微信返回匿名资料，已为你保留专属雅号');
+      this.connect({ authStatus: 'GUEST_ALIAS' });
+      return;
+    }
+
+    this.connect({
+      nickName: hasRealNick ? rawNick : undefined,
+      avatarUrl: hasRealAvatar ? rawAvatar : undefined,
+      authStatus: 'AUTHORIZED',
+    });
+  }
+
+  public enterAsGuestAlias(): void {
+    if (this.state.authBusy || this.authenticationInFlight) return;
+    this.active = true;
+    markOnlineAuthPromptCompleted();
+    this.connect({ authStatus: 'GUEST_ALIAS' });
+  }
+
   public updateNickname(nick: string): void {
     const nickname = nick.trim().slice(0, 16);
     if (!nickname) return;
     this.state.player = { ...this.state.player, nickname };
     if (this.state.connStatus === 'CONNECTED') {
-      this.send({ type: 'profile:update', nickname });
+      this.send({
+        type: 'profile:update',
+        nickname,
+        avatarUrl: this.state.player.avatarUrl,
+      });
     }
     this.onChange();
+
+    void updateCloudProfile({ nickName: nickname })
+      .then((auth) => {
+        this.state.player = {
+          ...this.state.player,
+          ...auth.player,
+          nickname,
+        };
+        this.onChange();
+      })
+      .catch(() => {
+        // Keep responsive local/WS rename even if cloud persistence fails transiently
+      });
   }
 
   /** The production CloudRun container endpoint is fixed at build time. */
@@ -107,6 +239,7 @@ export class MiniGameOnlineClient {
     this.reconnectAttempts = 0;
     this.closeSocket();
     this.active = true;
+    markOnlineAuthPromptCompleted();
     this.connect();
   }
 
@@ -123,21 +256,25 @@ export class MiniGameOnlineClient {
     this.state.connStatus = 'DISCONNECTED';
   }
 
-  private connect(): void {
+  private connect(profile?: WeChatProfileSyncInput): void {
     if (!this.active) return;
     if (this.authenticationInFlight) return;
     const attemptId = ++this.connectSeq;
     this.authenticationInFlight = true;
+    this.state.authBusy = true;
     this.state.connStatus = 'AUTHENTICATING';
     this.onChange();
 
-    void this.authenticateAndOpenSocket(attemptId);
+    void this.authenticateAndOpenSocket(attemptId, profile);
   }
 
-  private async authenticateAndOpenSocket(attemptId: number): Promise<void> {
+  private async authenticateAndOpenSocket(
+    attemptId: number,
+    profile?: WeChatProfileSyncInput
+  ): Promise<void> {
     let token: string;
     try {
-      const auth = await loginWithWeChat();
+      const auth = await loginWithWeChat(profile);
       if (!this.active || this.connectSeq !== attemptId) return;
       token = auth.token;
       this.state.player = auth.player;
@@ -150,6 +287,7 @@ export class MiniGameOnlineClient {
       return;
     } finally {
       this.authenticationInFlight = false;
+      this.state.authBusy = false;
     }
 
     if (!wx.cloud || typeof wx.cloud.connectContainer !== 'function') {

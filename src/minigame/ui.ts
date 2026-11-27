@@ -312,3 +312,87 @@ export function wrapLines(
   ctx.restore();
   return lines;
 }
+
+interface AvatarCacheEntry {
+  img: { src: string; width: number; height: number; onload: (() => void) | null; onerror: ((err?: unknown) => void) | null };
+  status: 'loading' | 'loaded' | 'error';
+}
+
+const avatarCache = new Map<string, AvatarCacheEntry>();
+const MAX_AVATAR_CACHE = 64;
+
+function getOrLoadAvatar(url: string, onLoaded: () => void): AvatarCacheEntry | null {
+  if (!url || !url.startsWith('https://')) return null;
+  const existing = avatarCache.get(url);
+  if (existing) return existing;
+  if (typeof wx === 'undefined' || typeof wx.createImage !== 'function') return null;
+
+  if (avatarCache.size >= MAX_AVATAR_CACHE) {
+    const oldestKey = avatarCache.keys().next().value;
+    if (oldestKey) avatarCache.delete(oldestKey);
+  }
+
+  const img = wx.createImage();
+  const entry: AvatarCacheEntry = { img, status: 'loading' };
+  avatarCache.set(url, entry);
+
+  img.onload = () => {
+    entry.status = 'loaded';
+    onLoaded();
+  };
+  img.onerror = () => {
+    entry.status = 'error';
+  };
+  img.src = url;
+  return entry;
+}
+
+export function drawCircularAvatar(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  avatarUrl: string | undefined,
+  nickname: string | null | undefined,
+  accentColor: string,
+  onLoaded: () => void
+): void {
+  const entry = avatarUrl ? getOrLoadAvatar(avatarUrl, onLoaded) : null;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+
+  if (entry && entry.status === 'loaded') {
+    ctx.save();
+    ctx.clip();
+    ctx.drawImage(
+      entry.img as unknown as CanvasImageSource,
+      cx - radius,
+      cy - radius,
+      radius * 2,
+      radius * 2
+    );
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = PALETTE.bgCardAlt;
+    ctx.fill();
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    const ch = (nickname || '弈').trim().slice(0, 1) || '弈';
+    ctx.fillStyle = accentColor;
+    ctx.font = `700 ${Math.max(10, Math.round(radius * 0.95))}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ch, cx, cy + 0.5);
+  }
+  ctx.restore();
+}

@@ -51,8 +51,51 @@ export interface WxMenuButtonRect {
   height: number;
 }
 
+export interface WxUserInfo {
+  nickName?: string;
+  avatarUrl?: string;
+  gender?: number;
+  country?: string;
+  province?: string;
+  city?: string;
+  language?: string;
+}
+
+export interface WxUserInfoButtonStyle {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderRadius?: number;
+  color?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  fontSize?: number;
+  lineHeight?: number;
+}
+
+export interface WxUserInfoButton {
+  show(): void;
+  hide(): void;
+  destroy(): void;
+  onTap(cb: (res: { userInfo?: WxUserInfo; errMsg?: string }) => void): void;
+  offTap?(cb?: (res: { userInfo?: WxUserInfo; errMsg?: string }) => void): void;
+  style?: WxUserInfoButtonStyle;
+}
+
+export interface WxImage {
+  src: string;
+  width: number;
+  height: number;
+  onload: (() => void) | null;
+  onerror: ((err?: unknown) => void) | null;
+}
+
 export interface WxGlobal {
   createCanvas(): WxCanvas;
+  createImage?(): WxImage;
   getSystemInfoSync(): WxSystemInfo;
   getWindowInfo?(): WxSystemInfo;
   getMenuButtonBoundingClientRect?(): WxMenuButtonRect;
@@ -75,6 +118,24 @@ export interface WxGlobal {
   }): void;
   setClipboardData(opts: { data: string; success?: () => void }): void;
   connectSocket(opts: { url: string }): WxSocketTask;
+  createUserInfoButton?(opts: {
+    type: 'text' | 'image';
+    text?: string;
+    image?: string;
+    withCredentials?: boolean;
+    lang?: 'en' | 'zh_CN' | 'zh_TW';
+    style: WxUserInfoButtonStyle;
+  }): WxUserInfoButton;
+  getSetting?(opts: {
+    success?: (res: { authSetting?: Record<string, boolean | undefined> }) => void;
+    fail?: (err: unknown) => void;
+  }): void;
+  getUserInfo?(opts: {
+    withCredentials?: boolean;
+    lang?: 'en' | 'zh_CN' | 'zh_TW';
+    success?: (res: { userInfo?: WxUserInfo }) => void;
+    fail?: (err: unknown) => void;
+  }): void;
   cloud: {
     init(opts: { env: string }): void;
     callFunction(opts: { name: string; data?: Record<string, unknown> }): Promise<{ result?: unknown }>;

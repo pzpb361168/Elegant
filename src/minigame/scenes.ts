@@ -47,6 +47,7 @@ import {
 import { soundFX } from './sound.ts';
 import {
   drawButton,
+  drawCircularAvatar,
   drawEllipsisText,
   drawSegmented,
   fillRoundRect,
@@ -55,6 +56,7 @@ import {
   UIRegistry,
   wrapLines,
 } from './ui.ts';
+import type { WxUserInfoButton } from './wx.d.ts';
 
 type ActiveTab = Exclude<GameTab, 'LOBBY'>;
 type ModalKind = 'NONE' | 'RULES' | 'STATS' | 'CREATE_ROOM' | 'CHAT';
@@ -109,6 +111,9 @@ export class MiniGameApp {
   private aiTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = true;
   private onNeedRender: () => void;
+  private nativeAuthBtn: WxUserInfoButton | null = null;
+  private nativeAuthTarget: { kind: 'AUTH_GATE' | 'LOBBY_REAUTH'; rect: Rect } | null = null;
+  private pendingNativeAuthTarget: { kind: 'AUTH_GATE' | 'LOBBY_REAUTH'; rect: Rect } | null = null;
 
   constructor(onNeedRender: () => void) {
     this.onNeedRender = onNeedRender;
@@ -130,7 +135,11 @@ export class MiniGameApp {
     if (this.activeTab === tab) return;
     this.activeTab = tab;
     this.modal = 'NONE';
-    if (tab === 'ONLINE') this.online.start();
+    if (tab !== 'ONLINE') {
+      this.destroyNativeAuthButton();
+    } else {
+      this.online.start();
+    }
     soundFX.playSelect();
     this.markDirty();
   }
@@ -138,8 +147,89 @@ export class MiniGameApp {
   public handleJoinFromLaunch(roomId?: string): void {
     if (!roomId) return;
     this.activeTab = 'ONLINE';
+    this.modal = 'NONE';
     this.online.queueJoinRoom(roomId);
     this.markDirty();
+  }
+
+  public destroyNativeAuthButton(): void {
+    if (this.nativeAuthBtn) {
+      try {
+        this.nativeAuthBtn.hide();
+        this.nativeAuthBtn.destroy();
+      } catch {
+        // Ignore
+      }
+      this.nativeAuthBtn = null;
+    }
+    this.nativeAuthTarget = null;
+  }
+
+  private syncNativeAuthButton(): void {
+    const target =
+      this.activeTab === 'ONLINE' &&
+      this.modal === 'NONE' &&
+      !this.online.state.room &&
+      !this.online.state.authBusy
+        ? this.pendingNativeAuthTarget
+        : null;
+
+    if (!target || typeof wx.createUserInfoButton !== 'function') {
+      this.destroyNativeAuthButton();
+      return;
+    }
+
+    if (
+      this.nativeAuthBtn &&
+      this.nativeAuthTarget &&
+      this.nativeAuthTarget.kind === target.kind &&
+      Math.abs(this.nativeAuthTarget.rect.x - target.rect.x) < 1 &&
+      Math.abs(this.nativeAuthTarget.rect.y - target.rect.y) < 1 &&
+      Math.abs(this.nativeAuthTarget.rect.w - target.rect.w) < 1 &&
+      Math.abs(this.nativeAuthTarget.rect.h - target.rect.h) < 1
+    ) {
+      return;
+    }
+
+    this.destroyNativeAuthButton();
+
+    try {
+      const left = Math.round(target.rect.x);
+      const top = Math.round(target.rect.y);
+      const width = Math.round(target.rect.w);
+      const height = Math.round(target.rect.h);
+      const btn = wx.createUserInfoButton({
+        type: 'text',
+        text: '',
+        lang: 'zh_CN',
+        style: {
+          left,
+          top,
+          width,
+          height,
+          backgroundColor: 'rgba(0,0,0,0)',
+          borderColor: 'rgba(0,0,0,0)',
+          borderWidth: 0,
+          borderRadius: target.kind === 'AUTH_GATE' ? 10 : 6,
+          color: 'rgba(0,0,0,0)',
+          fontSize: 12,
+          lineHeight: height,
+          textAlign: 'center',
+        },
+      });
+      const isLobbyReauth = target.kind === 'LOBBY_REAUTH';
+      btn.onTap((res) => {
+        this.destroyNativeAuthButton();
+        void this.online.handleWeChatUserInfoTap(res?.userInfo ?? null, isLobbyReauth);
+      });
+      this.nativeAuthBtn = btn;
+      this.nativeAuthTarget = {
+        kind: target.kind,
+        rect: { x: target.rect.x, y: target.rect.y, w: target.rect.w, h: target.rect.h },
+      };
+    } catch {
+      this.destroyNativeAuthButton();
+    }
   }
 
   private clearAiTimer(): void {
@@ -262,6 +352,7 @@ export class MiniGameApp {
 
   public render(ctx: CanvasRenderingContext2D, m: ScreenMetrics): void {
     this.ui.resetFrame();
+    this.pendingNativeAuthTarget = null;
     ctx.fillStyle = PALETTE.bgPaper;
     ctx.fillRect(0, 0, m.width, m.height);
 
@@ -291,6 +382,8 @@ export class MiniGameApp {
     if (this.modal !== 'NONE') {
       this.renderModal(ctx, m);
     }
+
+    this.syncNativeAuthButton();
   }
 
   private renderHeader(
@@ -1239,12 +1332,179 @@ export class MiniGameApp {
   // ============================================================================
 
   private renderOnlineScene(ctx: CanvasRenderingContext2D, r: Rect): void {
-    const room = this.online.state.room;
-    if (!room) {
-      this.renderOnlineLobby(ctx, r);
-    } else {
+    const os = this.online.state;
+    if (os.room) {
       this.renderOnlineRoom(ctx, r);
+      return;
     }
+    if (os.connStatus === 'AUTH_GATE' || (os.connStatus === 'AUTHENTICATING' && !os.player.playerId)) {
+      this.renderOnlineAuthGate(ctx, r);
+      return;
+    }
+    this.renderOnlineLobby(ctx, r);
+  }
+
+  private renderOnlineAuthGate(ctx: CanvasRenderingContext2D, r: Rect): void {
+    const os = this.online.state;
+    const cardW = Math.min(340, r.w - 8);
+    const inviteExtra = os.pendingRoomJoin ? 36 : 0;
+    const descFont = '400 12px sans-serif';
+    const descLines = wrapLines(
+      ctx,
+      '授权后将同步你的微信头像与昵称用于棋室席位展示，仅保存于雅弈阁云端档案；拒绝授权也可使用随机雅号正常联机。',
+      cardW - 44,
+      descFont
+    );
+    const descH = descLines.length * 19;
+    const cardH = Math.min(r.h - 12, 276 + descH + inviteExtra);
+    const cardX = r.x + (r.w - cardW) / 2;
+    const cardY = r.y + Math.max(8, (r.h - cardH) * 0.42);
+
+    fillRoundRect(ctx, cardX, cardY, cardW, cardH, 12, PALETTE.bgCard, PALETTE.lineHairline, 1);
+
+    let cy = cardY + 38;
+    // Vermilion seal crest
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cardX + cardW / 2, cy, 24, 0, Math.PI * 2);
+    ctx.fillStyle = PALETTE.cinnabar;
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.white;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cardX + cardW / 2, cy, 20.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = PALETTE.white;
+    ctx.font = '700 22px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('弈', cardX + cardW / 2, cy + 1);
+    ctx.restore();
+
+    cy += 42;
+    drawEllipsisText(
+      ctx,
+      '雅弈阁联机弈室',
+      cardX + cardW / 2,
+      cy,
+      cardW - 32,
+      PALETTE.woodDark,
+      '700 18px serif',
+      'center',
+      'middle'
+    );
+
+    cy += 22;
+    drawEllipsisText(
+      ctx,
+      '五子棋 · 中国象棋 · 陆战军旗实时对战',
+      cardX + cardW / 2,
+      cy,
+      cardW - 32,
+      PALETTE.inkMuted,
+      '500 12px sans-serif',
+      'center',
+      'middle'
+    );
+
+    if (os.pendingRoomJoin) {
+      cy += 18;
+      fillRoundRect(ctx, cardX + 20, cy, cardW - 40, 28, 7, PALETTE.goldSoft, PALETTE.goldBright, 1);
+      drawEllipsisText(
+        ctx,
+        `受邀加入棋室 ${os.pendingRoomJoin} · 登录后自动入座`,
+        cardX + cardW / 2,
+        cy + 14,
+        cardW - 56,
+        PALETTE.gold,
+        '600 11px sans-serif',
+        'center',
+        'middle'
+      );
+      cy += 34;
+    } else {
+      cy += 18;
+    }
+
+    // Subtle hairline divider
+    ctx.save();
+    ctx.strokeStyle = PALETTE.lineHairline;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cardX + 22, cy);
+    ctx.lineTo(cardX + cardW - 22, cy);
+    ctx.stroke();
+    ctx.restore();
+
+    cy += 16;
+    ctx.save();
+    ctx.fillStyle = PALETTE.inkMuted;
+    ctx.font = descFont;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    descLines.forEach((line, idx) => {
+      ctx.fillText(line, cardX + cardW / 2, cy + idx * 19);
+    });
+    ctx.restore();
+
+    const btnW = cardW - 44;
+    const btnX = cardX + 22;
+    const primaryY = cardY + cardH - 108;
+    const primaryRect: Rect = { x: btnX, y: primaryY, w: btnW, h: 44 };
+    const isBusy = os.connStatus === 'AUTHENTICATING' || os.authBusy;
+
+    ctx.save();
+    if (isBusy) ctx.globalAlpha = 0.65;
+    fillRoundRect(
+      ctx,
+      primaryRect.x,
+      primaryRect.y,
+      primaryRect.w,
+      primaryRect.h,
+      10,
+      PALETTE.cinnabar,
+      PALETTE.cinnabar,
+      1
+    );
+    drawEllipsisText(
+      ctx,
+      isBusy ? '正在同步微信身份…' : '微信授权登录',
+      primaryRect.x + primaryRect.w / 2,
+      primaryRect.y + primaryRect.h / 2,
+      primaryRect.w - 16,
+      PALETTE.white,
+      '600 14px sans-serif',
+      'center',
+      'middle'
+    );
+    ctx.restore();
+
+    if (!isBusy) {
+      this.pendingNativeAuthTarget = { kind: 'AUTH_GATE', rect: primaryRect };
+      if (typeof wx.createUserInfoButton !== 'function') {
+        this.ui.addHit('ol-auth-wechat-fallback', primaryRect, () => {
+          void this.online.handleWeChatUserInfoTap(null, false);
+        });
+      }
+    }
+
+    const secondaryRect: Rect = { x: btnX, y: primaryY + 54, w: btnW, h: 38 };
+    drawButton(
+      ctx,
+      this.ui,
+      'ol-auth-guest',
+      secondaryRect,
+      '先用随机雅号进入',
+      () => this.online.enterAsGuestAlias(),
+      {
+        bg: PALETTE.white,
+        border: PALETTE.lineHairline,
+        color: PALETTE.inkPrimary,
+        radius: 10,
+        fontSize: 13,
+        disabled: isBusy,
+      }
+    );
   }
 
   private renderOnlineLobby(ctx: CanvasRenderingContext2D, r: Rect): void {
@@ -1283,22 +1543,47 @@ export class MiniGameApp {
     );
     y += 40;
 
-    // Player Identity + CloudRun Channel Card
-    fillRoundRect(ctx, r.x, y, r.w, 66, 8, PALETTE.bgCard, PALETTE.lineHairline, 1);
+    // Player Identity + Avatar + Optional WeChat Re-auth Card
+    const profileCardH = 72;
+    fillRoundRect(ctx, r.x, y, r.w, profileCardH, 8, PALETTE.bgCard, PALETTE.lineHairline, 1);
+    drawCircularAvatar(
+      ctx,
+      r.x + 28,
+      y + profileCardH / 2,
+      19,
+      os.player.avatarUrl,
+      os.player.nickname,
+      PALETTE.cinnabar,
+      () => this.markDirty()
+    );
+
+    const hasWeChatAvatar = os.player.authStatus === 'AUTHORIZED' && Boolean(os.player.avatarUrl);
     drawEllipsisText(
       ctx,
-      `棋士雅号：${os.player.nickname}`,
-      r.x + 10,
-      y + 18,
-      r.w - 88,
+      os.player.nickname,
+      r.x + 56,
+      y + 23,
+      r.w - 134,
       PALETTE.inkPrimary,
-      '600 12px sans-serif'
+      '700 13px sans-serif'
     );
+    drawEllipsisText(
+      ctx,
+      hasWeChatAvatar
+        ? '已同步微信头像 · 云托管内网直连'
+        : '随机雅号模式 · 可随时同步微信头像',
+      r.x + 56,
+      y + 48,
+      r.w - 134,
+      hasWeChatAvatar ? PALETTE.teal : PALETTE.inkMuted,
+      '500 10px sans-serif'
+    );
+
     drawButton(
       ctx,
       this.ui,
       'ol-nick',
-      { x: r.x + r.w - 72, y: y + 6, w: 64, h: 24 },
+      { x: r.x + r.w - 72, y: y + 8, w: 64, h: 24 },
       '改雅号',
       () => {
         promptEditableModal('修改棋士雅号', os.player.nickname, '请输入最多16字雅号', (val) => {
@@ -1308,28 +1593,56 @@ export class MiniGameApp {
       { fontSize: 10 }
     );
 
-    drawEllipsisText(
-      ctx,
-      `云托管通道：${os.wsUrl}`,
-      r.x + 10,
-      y + 47,
-      r.w - 88,
-      PALETTE.inkMuted,
-      '500 10px monospace'
-    );
-    fillRoundRect(ctx, r.x + r.w - 72, y + 36, 64, 22, 6, PALETTE.bgPanel, PALETTE.lineHairline, 1);
-    drawEllipsisText(
-      ctx,
-      '内网免域名',
-      r.x + r.w - 40,
-      y + 47,
-      60,
-      PALETTE.teal,
-      '600 9px sans-serif',
-      'center',
-      'middle'
-    );
-    y += 74;
+    if (!hasWeChatAvatar) {
+      const reauthRect: Rect = { x: r.x + r.w - 72, y: y + 40, w: 64, h: 24 };
+      ctx.save();
+      if (os.authBusy) ctx.globalAlpha = 0.55;
+      fillRoundRect(
+        ctx,
+        reauthRect.x,
+        reauthRect.y,
+        reauthRect.w,
+        reauthRect.h,
+        6,
+        PALETTE.white,
+        PALETTE.cinnabar,
+        1
+      );
+      drawEllipsisText(
+        ctx,
+        os.authBusy ? '同步中…' : '微信授权',
+        reauthRect.x + reauthRect.w / 2,
+        reauthRect.y + reauthRect.h / 2,
+        reauthRect.w - 6,
+        PALETTE.cinnabar,
+        '600 10px sans-serif',
+        'center',
+        'middle'
+      );
+      ctx.restore();
+
+      if (!os.authBusy) {
+        this.pendingNativeAuthTarget = { kind: 'LOBBY_REAUTH', rect: reauthRect };
+        if (typeof wx.createUserInfoButton !== 'function') {
+          this.ui.addHit('ol-reauth-fallback', reauthRect, () => {
+            void this.online.handleWeChatUserInfoTap(null, true);
+          });
+        }
+      }
+    } else {
+      drawEllipsisText(
+        ctx,
+        '微信已同步',
+        r.x + r.w - 40,
+        y + 52,
+        64,
+        PALETTE.teal,
+        '600 10px sans-serif',
+        'center',
+        'middle'
+      );
+    }
+    y += profileCardH + 8;
 
     // Create / Join Buttons
     const halfW = (r.w - 8) / 2;
@@ -1544,6 +1857,7 @@ export class MiniGameApp {
       sx: number,
       seatNum: 1 | 2,
       nick: string | null,
+      avatarUrl: string | undefined,
       ready: boolean,
       roleColor: string,
       sideChar: string
@@ -1560,8 +1874,18 @@ export class MiniGameApp {
         isMine ? roleColor : PALETTE.lineHairline,
         isMine ? 1.4 : 1
       );
+      drawCircularAvatar(
+        ctx,
+        sx + 15,
+        y + 15,
+        10,
+        nick ? avatarUrl : undefined,
+        nick || sideChar,
+        nick ? roleColor : PALETTE.inkMuted,
+        () => this.markDirty()
+      );
       const txt = nick ? `${sideChar}:${nick}${ready && room.status === 'WAITING' ? '(就绪)' : ''}` : `${sideChar}:空席位`;
-      drawEllipsisText(ctx, txt, sx + 8, y + 15, seatBoxW - 16, nick ? roleColor : PALETTE.inkMuted, '600 11px sans-serif');
+      drawEllipsisText(ctx, txt, sx + 30, y + 15, seatBoxW - 36, nick ? roleColor : PALETTE.inkMuted, '600 11px sans-serif');
       if (!nick && room.status === 'WAITING') {
         this.ui.addHit(`seat-${seatNum}`, { x: sx, y, w: seatBoxW, h: 30 }, () =>
           this.online.switchToSeat(seatNum)
@@ -1569,8 +1893,8 @@ export class MiniGameApp {
       }
     };
 
-    drawSeat(r.x, 1, room.seat1.nickname, room.seat1.ready, PALETTE.cinnabar, s1Label);
-    drawSeat(r.x + seatBoxW + 6, 2, room.seat2.nickname, room.seat2.ready, PALETTE.indigo, s2Label);
+    drawSeat(r.x, 1, room.seat1.nickname, room.seat1.avatarUrl, room.seat1.ready, PALETTE.cinnabar, s1Label);
+    drawSeat(r.x + seatBoxW + 6, 2, room.seat2.nickname, room.seat2.avatarUrl, room.seat2.ready, PALETTE.indigo, s2Label);
     y += 35;
 
     // Pending Request Banner OR Turn/Deploy Banner

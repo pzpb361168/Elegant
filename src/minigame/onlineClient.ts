@@ -114,22 +114,6 @@ export class MiniGameOnlineClient {
   }
 
   private async trySilentRestoreIfAlreadyAuthorized(): Promise<void> {
-    if (typeof wx.getPrivacySetting === 'function') {
-      const needPrivacy = await new Promise<boolean>((resolve) => {
-        try {
-          wx.getPrivacySetting!({
-            success: (res) => resolve(Boolean(res?.needAuthorization)),
-            fail: () => resolve(false),
-          });
-        } catch {
-          resolve(false);
-        }
-      });
-      if (needPrivacy && this.active && this.state.connStatus === 'AUTH_GATE') {
-        await this.requestPrivacyAuthorization();
-      }
-    }
-
     const check = await fetchExistingWeChatUserInfo();
     if (!this.active || this.state.connStatus !== 'AUTH_GATE' || this.state.authBusy) return;
     if (!check.authorized) return;
@@ -187,7 +171,7 @@ export class MiniGameOnlineClient {
     }
 
     if (!userInfo && isUndeclaredScope) {
-      showToast('隐私指引尚未生效，请在公众平台确认已提交并通过审核');
+      showToast('隐私指引尚未发布生效，请到公众平台底部点确定提交');
       if (!fromLobbyReauth) {
         markOnlineAuthPromptCompleted();
         this.connect({ authStatus: 'GUEST_ALIAS' });
@@ -208,12 +192,22 @@ export class MiniGameOnlineClient {
           await this.handleWeChatUserInfoTap({ userInfo: check.userInfo ?? undefined }, fromLobbyReauth);
           return;
         }
-        showToast('已同意隐私协议，请再点一次「微信授权」');
+        try {
+          wx.showModal({
+            title: '微信隐私协议未同步',
+            content:
+              '当前环境拦截了头像授权。请确认：\n1. 微信公众平台「用户隐私保护指引」页面最底部已点击「确定并生成协议」并通过审核；\n2. 使用手机微信扫码「真机预览」测试。',
+            confirmText: '知道了',
+            showCancel: false,
+          });
+        } catch {
+          showToast('请在公众平台提交隐私协议并用手机真机预览');
+        }
         this.onChange();
         return;
       }
       if (privacyRes === 'UNCONFIGURED') {
-        showToast('隐私指引尚未发布生效，请到公众平台提交并等待通过');
+        showToast('隐私指引尚未发布生效，请到公众平台底部点确定提交');
         if (!fromLobbyReauth) {
           markOnlineAuthPromptCompleted();
           this.connect({ authStatus: 'GUEST_ALIAS' });
@@ -223,7 +217,7 @@ export class MiniGameOnlineClient {
         return;
       }
       if (fromLobbyReauth) {
-        showToast('需先同意隐私协议才能同步微信头像');
+        showToast('已取消隐私协议，继续使用当前雅号');
         this.onChange();
         return;
       }

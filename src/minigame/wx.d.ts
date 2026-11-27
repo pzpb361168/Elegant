@@ -142,6 +142,12 @@ export interface WxGlobal {
     success?: () => void;
     fail?: (err: { errMsg?: string; errno?: number }) => void;
   }): void;
+  onNeedPrivacyAuthorization?(
+    cb: (
+      resolve: (opts: { event: 'agree' | 'disagree' | 'exposureAuthorization' }) => void,
+      eventInfo?: { referrer?: string }
+    ) => void
+  ): void;
   getUserInfo?(opts: {
     withCredentials?: boolean;
     lang?: 'en' | 'zh_CN' | 'zh_TW';

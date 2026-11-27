@@ -1,5 +1,4 @@
 {
   "deviceOrientation": "portrait",
-  "showStatusBar": false,
-  "__usePrivacyCheck__": true
+  "showStatusBar": false
 }

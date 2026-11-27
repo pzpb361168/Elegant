@@ -134,6 +134,14 @@ export interface WxGlobal {
     success?: (res: { authSetting?: Record<string, boolean | undefined> }) => void;
     fail?: (err: unknown) => void;
   }): void;
+  getPrivacySetting?(opts: {
+    success?: (res: { needAuthorization?: boolean; privacyContractName?: string }) => void;
+    fail?: (err: unknown) => void;
+  }): void;
+  requirePrivacyAuthorize?(opts: {
+    success?: () => void;
+    fail?: (err: { errMsg?: string; errno?: number }) => void;
+  }): void;
   getUserInfo?(opts: {
     withCredentials?: boolean;
     lang?: 'en' | 'zh_CN' | 'zh_TW';

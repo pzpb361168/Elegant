@@ -88,7 +88,48 @@ export class MiniGameOnlineClient {
     void this.trySilentRestoreIfAlreadyAuthorized();
   }
 
+  private async requestPrivacyAuthorization(): Promise<'OK' | 'DENIED' | 'UNCONFIGURED' | 'UNSUPPORTED'> {
+    if (typeof wx.requirePrivacyAuthorize !== 'function') {
+      return 'UNSUPPORTED';
+    }
+    return new Promise((resolve) => {
+      try {
+        wx.requirePrivacyAuthorize!({
+          success: () => resolve('OK'),
+          fail: (err) => {
+            console.warn('[auth] requirePrivacyAuthorize fail:', err);
+            const msg = typeof err?.errMsg === 'string' ? err.errMsg : '';
+            const errno = typeof err?.errno === 'number' ? err.errno : 0;
+            if (errno === 112 || /not declared|112/i.test(msg)) {
+              resolve('UNCONFIGURED');
+            } else {
+              resolve('DENIED');
+            }
+          },
+        });
+      } catch {
+        resolve('UNSUPPORTED');
+      }
+    });
+  }
+
   private async trySilentRestoreIfAlreadyAuthorized(): Promise<void> {
+    if (typeof wx.getPrivacySetting === 'function') {
+      const needPrivacy = await new Promise<boolean>((resolve) => {
+        try {
+          wx.getPrivacySetting!({
+            success: (res) => resolve(Boolean(res?.needAuthorization)),
+            fail: () => resolve(false),
+          });
+        } catch {
+          resolve(false);
+        }
+      });
+      if (needPrivacy && this.active && this.state.connStatus === 'AUTH_GATE') {
+        await this.requestPrivacyAuthorization();
+      }
+    }
+
     const check = await fetchExistingWeChatUserInfo();
     if (!this.active || this.state.connStatus !== 'AUTH_GATE' || this.state.authBusy) return;
     if (!check.authorized) return;
@@ -129,16 +170,70 @@ export class MiniGameOnlineClient {
   }
 
   public async handleWeChatUserInfoTap(
-    tapRes: { userInfo?: WxUserInfo; errMsg?: string } | null,
+    tapRes: { userInfo?: WxUserInfo; errMsg?: string; errno?: number } | null,
     fromLobbyReauth = false
   ): Promise<void> {
     if (this.state.authBusy) return;
     this.active = true;
-    markOnlineAuthPromptCompleted();
 
     const userInfo = tapRes?.userInfo ?? null;
     const errMsg = typeof tapRes?.errMsg === 'string' ? tapRes.errMsg : '';
-    const isPrivacyError = /privacy|104/i.test(errMsg);
+    const errno = typeof tapRes?.errno === 'number' ? tapRes.errno : 0;
+    const isUndeclaredScope = errno === 112 || /not declared|112/i.test(errMsg);
+    const isPrivacyAuthNeeded = !isUndeclaredScope && (errno === 104 || /privacy/i.test(errMsg));
+
+    if (!userInfo && tapRes) {
+      console.warn('[auth] userInfoButton tap without userInfo:', tapRes);
+    }
+
+    if (!userInfo && isUndeclaredScope) {
+      showToast('隐私指引尚未生效，请在公众平台确认已提交并通过审核');
+      if (!fromLobbyReauth) {
+        markOnlineAuthPromptCompleted();
+        this.connect({ authStatus: 'GUEST_ALIAS' });
+      } else {
+        this.onChange();
+      }
+      return;
+    }
+
+    if (!userInfo && isPrivacyAuthNeeded) {
+      const privacyRes = await this.requestPrivacyAuthorization();
+      if (privacyRes === 'OK') {
+        const check = await fetchExistingWeChatUserInfo();
+        const existingNick =
+          typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
+        const existingAvatar = normalizeWeChatAvatarUrl(check.userInfo?.avatarUrl);
+        if (check.authorized && (existingAvatar || (existingNick && existingNick !== '微信用户'))) {
+          await this.handleWeChatUserInfoTap({ userInfo: check.userInfo ?? undefined }, fromLobbyReauth);
+          return;
+        }
+        showToast('已同意隐私协议，请再点一次「微信授权」');
+        this.onChange();
+        return;
+      }
+      if (privacyRes === 'UNCONFIGURED') {
+        showToast('隐私指引尚未发布生效，请到公众平台提交并等待通过');
+        if (!fromLobbyReauth) {
+          markOnlineAuthPromptCompleted();
+          this.connect({ authStatus: 'GUEST_ALIAS' });
+        } else {
+          this.onChange();
+        }
+        return;
+      }
+      if (fromLobbyReauth) {
+        showToast('需先同意隐私协议才能同步微信头像');
+        this.onChange();
+        return;
+      }
+      markOnlineAuthPromptCompleted();
+      showToast('已为你分配专属雅号，大厅可随时重新授权');
+      this.connect({ authStatus: 'GUEST_ALIAS' });
+      return;
+    }
+
+    markOnlineAuthPromptCompleted();
 
     const rawNick = typeof userInfo?.nickName === 'string' ? userInfo.nickName.trim() : '';
     const cleanAvatar = normalizeWeChatAvatarUrl(userInfo?.avatarUrl);
@@ -148,11 +243,6 @@ export class MiniGameOnlineClient {
 
     if (fromLobbyReauth) {
       if (!userInfo) {
-        if (isPrivacyError) {
-          showToast('需先在微信公众平台配置隐私指引（昵称与头像）');
-          this.onChange();
-          return;
-        }
         this.promptOpenWeChatSettings();
         this.onChange();
         return;
@@ -171,11 +261,7 @@ export class MiniGameOnlineClient {
     }
 
     if (!userInfo) {
-      showToast(
-        isPrivacyError
-          ? '未配置微信隐私指引，已先用专属雅号进入'
-          : '已为你分配专属雅号，大厅可随时重新授权'
-      );
+      showToast('已为你分配专属雅号，大厅可随时重新授权');
       this.connect({ authStatus: 'GUEST_ALIAS' });
       return;
     }

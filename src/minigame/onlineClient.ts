@@ -10,6 +10,7 @@ import type {
 } from '../shared/onlineTypes.ts';
 import type { WxSocketTask, WxUserInfo } from './wx.d.ts';
 import {
+  confirmModal,
   hasCompletedOnlineAuthPrompt,
   markOnlineAuthPromptCompleted,
   showToast,
@@ -192,17 +193,7 @@ export class MiniGameOnlineClient {
           await this.handleWeChatUserInfoTap({ userInfo: check.userInfo ?? undefined }, fromLobbyReauth);
           return;
         }
-        try {
-          wx.showModal({
-            title: '微信隐私协议未同步',
-            content:
-              '当前环境拦截了头像授权。请确认：\n1. 微信公众平台「用户隐私保护指引」页面最底部已点击「确定并生成协议」并通过审核；\n2. 使用手机微信扫码「真机预览」测试。',
-            confirmText: '知道了',
-            showCancel: false,
-          });
-        } catch {
-          showToast('请在公众平台提交隐私协议并用手机真机预览');
-        }
+        showToast('请确认公众平台隐私指引已点底部确定提交，或用手机真机预览');
         this.onChange();
         return;
       }
@@ -319,46 +310,39 @@ export class MiniGameOnlineClient {
       showToast('已取消微信授权，继续使用当前雅号');
       return;
     }
-    try {
-      wx.showModal({
-        title: '开启微信头像与昵称权限',
-        content: '如之前拒绝过授权，请前往设置页打开「用户信息」开关后再同步头像。',
-        confirmText: '去开启',
-        cancelText: '暂不',
-        success: (m) => {
-          if (!m.confirm) return;
-          wx.openSetting!({
-            success: async (res) => {
-              if (!res?.authSetting?.['scope.userInfo']) {
-                showToast('尚未开启用户信息权限');
-                this.onChange();
-                return;
-              }
-              const check = await fetchExistingWeChatUserInfo();
-              const rawNick =
-                typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
-              const cleanAvatar = normalizeWeChatAvatarUrl(check.userInfo?.avatarUrl);
-              const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
-              if (hasRealNick || cleanAvatar) {
-                await this.syncLobbyWeChatProfile(
-                  hasRealNick ? rawNick : undefined,
-                  cleanAvatar || undefined
-                );
-              } else {
-                showToast('微信返回默认匿名资料，保留当前雅号');
-                this.onChange();
-              }
-            },
-            fail: () => {
-              showToast('打开授权设置失败，请在真机重试');
+    confirmModal(
+      '开启微信头像与昵称权限',
+      '如之前拒绝过授权，请前往设置页打开「用户信息」开关后再同步头像。',
+      () => {
+        wx.openSetting!({
+          success: async (res) => {
+            if (!res?.authSetting?.['scope.userInfo']) {
+              showToast('尚未开启用户信息权限');
               this.onChange();
-            },
-          });
-        },
-      });
-    } catch {
-      showToast('已取消微信授权，继续使用当前雅号');
-    }
+              return;
+            }
+            const check = await fetchExistingWeChatUserInfo();
+            const rawNick =
+              typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
+            const cleanAvatar = normalizeWeChatAvatarUrl(check.userInfo?.avatarUrl);
+            const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
+            if (hasRealNick || cleanAvatar) {
+              await this.syncLobbyWeChatProfile(
+                hasRealNick ? rawNick : undefined,
+                cleanAvatar || undefined
+              );
+            } else {
+              showToast('微信返回默认匿名资料，保留当前雅号');
+              this.onChange();
+            }
+          },
+          fail: () => {
+            showToast('打开授权设置失败，请在真机重试');
+            this.onChange();
+          },
+        });
+      }
+    );
   }
 
   public async handleFallbackAuthTap(fromLobbyReauth: boolean): Promise<void> {

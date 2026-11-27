@@ -167,6 +167,58 @@ export function saveWsUrl(url: string): string {
   return valid;
 }
 
+let activeSystemModalCount = 0;
+let onSystemModalChange: (() => void) | null = null;
+
+export function setSystemModalChangeListener(cb: () => void): void {
+  onSystemModalChange = cb;
+}
+
+export function isSystemModalOpen(): boolean {
+  return activeSystemModalCount > 0;
+}
+
+export function setupWeChatPrivacyHandler(): void {
+  if (typeof wx === 'undefined' || typeof wx.onNeedPrivacyAuthorization !== 'function') {
+    return;
+  }
+  try {
+    wx.onNeedPrivacyAuthorization((resolve) => {
+      try {
+        resolve({ event: 'exposureAuthorization' });
+      } catch {
+        // Ignore if unsupported
+      }
+      activeSystemModalCount++;
+      if (onSystemModalChange) onSystemModalChange();
+      try {
+        wx.showModal({
+          title: '用户隐私保护提示',
+          content:
+            '在你使用雅弈阁联机对战服务前，请阅读并同意《用户隐私保护指引》。同意后，我们将仅在获取你明示授权后收集微信昵称与头像用于棋室席位展示。',
+          confirmText: '同意',
+          cancelText: '拒绝',
+          success: (res) => {
+            activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+            if (res.confirm) {
+              resolve({ event: 'agree' });
+            } else {
+              resolve({ event: 'disagree' });
+            }
+            if (onSystemModalChange) onSystemModalChange();
+          },
+        });
+      } catch {
+        activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+        resolve({ event: 'agree' });
+        if (onSystemModalChange) onSystemModalChange();
+      }
+    });
+  } catch {
+    // Ignore on older base libraries
+  }
+}
+
 export function showToast(title: string, icon: 'success' | 'none' = 'none'): void {
   try {
     wx.showToast({ title, icon, duration: 1800 });
@@ -182,6 +234,8 @@ export function promptEditableModal(
   onConfirm: (value: string) => void
 ): void {
   try {
+    activeSystemModalCount++;
+    if (onSystemModalChange) onSystemModalChange();
     wx.showModal({
       title,
       content: defaultValue,
@@ -190,12 +244,16 @@ export function promptEditableModal(
       confirmText: '确认',
       cancelText: '取消',
       success: (res) => {
+        activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+        if (onSystemModalChange) onSystemModalChange();
         if (res.confirm && typeof res.content === 'string') {
           onConfirm(res.content);
         }
       },
     });
   } catch {
+    activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+    if (onSystemModalChange) onSystemModalChange();
     showToast('当前环境不支持弹窗输入');
   }
 }
@@ -206,16 +264,22 @@ export function confirmModal(
   onConfirm: () => void
 ): void {
   try {
+    activeSystemModalCount++;
+    if (onSystemModalChange) onSystemModalChange();
     wx.showModal({
       title,
       content,
       confirmText: '确认',
       cancelText: '取消',
       success: (res) => {
+        activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+        if (onSystemModalChange) onSystemModalChange();
         if (res.confirm) onConfirm();
       },
     });
   } catch {
+    activeSystemModalCount = Math.max(0, activeSystemModalCount - 1);
+    if (onSystemModalChange) onSystemModalChange();
     onConfirm();
   }
 }

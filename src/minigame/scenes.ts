@@ -37,11 +37,14 @@ import { renderGomokuBoard, renderJunqiBoard, renderXiangqiBoard } from './board
 import { MiniGameOnlineClient } from './onlineClient.ts';
 import {
   confirmModal,
+  isSystemModalOpen,
   loadGameStats,
   promptEditableModal,
   recordGameOutcome,
   resetAllGameStats,
   type ScreenMetrics,
+  setSystemModalChangeListener,
+  setupWeChatPrivacyHandler,
   showToast,
 } from './platform.ts';
 import { soundFX } from './sound.ts';
@@ -119,6 +122,13 @@ export class MiniGameApp {
   constructor(onNeedRender: () => void) {
     this.onNeedRender = onNeedRender;
     this.online = new MiniGameOnlineClient(() => this.markDirty());
+    setSystemModalChangeListener(() => {
+      if (isSystemModalOpen()) {
+        this.destroyNativeAuthButton();
+      }
+      this.markDirty();
+    });
+    setupWeChatPrivacyHandler();
   }
 
   public markDirty(): void {
@@ -170,6 +180,7 @@ export class MiniGameApp {
     const target =
       this.activeTab === 'ONLINE' &&
       this.modal === 'NONE' &&
+      !isSystemModalOpen() &&
       !this.online.state.room &&
       !this.online.state.authBusy
         ? this.pendingNativeAuthTarget

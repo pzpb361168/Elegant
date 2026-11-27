@@ -120,6 +120,12 @@ function sanitizeAvatarUrl(raw: unknown): string {
   if (!trimmed || trimmed.length > 512 || /[\s\u0000-\u001F]/.test(trimmed)) return '';
   try {
     const parsed = new URL(trimmed);
+    if (
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'thirdwx.qlogo.cn' || parsed.hostname === 'wx.qlogo.cn')
+    ) {
+      parsed.protocol = 'https:';
+    }
     if (parsed.protocol !== 'https:') return '';
     return parsed.toString();
   } catch {

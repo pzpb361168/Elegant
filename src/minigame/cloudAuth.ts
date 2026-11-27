@@ -36,6 +36,16 @@ function ensureCloudReady(): void {
   }
 }
 
+export function normalizeWeChatAvatarUrl(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  let url = raw.trim();
+  if (!url || url.length > 512) return '';
+  if (url.startsWith('http://thirdwx.qlogo.cn/') || url.startsWith('http://wx.qlogo.cn/')) {
+    url = 'https://' + url.slice('http://'.length);
+  }
+  return url.startsWith('https://') ? url : '';
+}
+
 export async function loginWithWeChat(profile?: WeChatProfileSyncInput): Promise<CloudAuthSession> {
   ensureCloudReady();
 
@@ -44,8 +54,9 @@ export async function loginWithWeChat(profile?: WeChatProfileSyncInput): Promise
   if (typeof profile?.nickName === 'string' && profile.nickName.trim()) {
     data.nickName = profile.nickName.trim().slice(0, 16);
   }
-  if (typeof profile?.avatarUrl === 'string' && profile.avatarUrl.trim().startsWith('https://')) {
-    data.avatarUrl = profile.avatarUrl.trim().slice(0, 512);
+  const cleanOutboundAvatar = normalizeWeChatAvatarUrl(profile?.avatarUrl);
+  if (cleanOutboundAvatar) {
+    data.avatarUrl = cleanOutboundAvatar;
   }
   if (profile?.authStatus) data.authStatus = profile.authStatus;
 
@@ -65,10 +76,8 @@ export async function loginWithWeChat(profile?: WeChatProfileSyncInput): Promise
     throw new Error('微信身份认证返回无效，请稍后重试');
   }
 
-  const avatarUrl =
-    typeof player.avatarUrl === 'string' && player.avatarUrl.startsWith('https://')
-      ? player.avatarUrl
-      : undefined;
+  const normalizedAvatar = normalizeWeChatAvatarUrl(player.avatarUrl);
+  const avatarUrl = normalizedAvatar || undefined;
   const authStatus: AuthProfileStatus =
     player.authStatus === 'AUTHORIZED' ? 'AUTHORIZED' : 'GUEST_ALIAS';
 

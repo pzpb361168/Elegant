@@ -17,6 +17,7 @@ import {
 import {
   fetchExistingWeChatUserInfo,
   loginWithWeChat,
+  normalizeWeChatAvatarUrl,
   updateCloudProfile,
   type WeChatProfileSyncInput,
 } from './cloudAuth.ts';
@@ -94,13 +95,13 @@ export class MiniGameOnlineClient {
 
     markOnlineAuthPromptCompleted();
     const rawNick = typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
-    const rawAvatar = typeof check.userInfo?.avatarUrl === 'string' ? check.userInfo.avatarUrl.trim() : '';
+    const cleanAvatar = normalizeWeChatAvatarUrl(check.userInfo?.avatarUrl);
     const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
-    const hasRealAvatar = rawAvatar.startsWith('https://');
+    const hasRealAvatar = Boolean(cleanAvatar);
 
     this.connect({
       nickName: hasRealNick ? rawNick : undefined,
-      avatarUrl: hasRealAvatar ? rawAvatar : undefined,
+      avatarUrl: hasRealAvatar ? cleanAvatar : undefined,
       authStatus: hasRealNick || hasRealAvatar ? 'AUTHORIZED' : 'GUEST_ALIAS',
     });
   }
@@ -128,57 +129,53 @@ export class MiniGameOnlineClient {
   }
 
   public async handleWeChatUserInfoTap(
-    userInfo: WxUserInfo | null,
+    tapRes: { userInfo?: WxUserInfo; errMsg?: string } | null,
     fromLobbyReauth = false
   ): Promise<void> {
     if (this.state.authBusy) return;
     this.active = true;
     markOnlineAuthPromptCompleted();
 
+    const userInfo = tapRes?.userInfo ?? null;
+    const errMsg = typeof tapRes?.errMsg === 'string' ? tapRes.errMsg : '';
+    const isPrivacyError = /privacy|104/i.test(errMsg);
+
     const rawNick = typeof userInfo?.nickName === 'string' ? userInfo.nickName.trim() : '';
-    const rawAvatar = typeof userInfo?.avatarUrl === 'string' ? userInfo.avatarUrl.trim() : '';
+    const cleanAvatar = normalizeWeChatAvatarUrl(userInfo?.avatarUrl);
     const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
-    const hasRealAvatar = rawAvatar.startsWith('https://');
+    const hasRealAvatar = Boolean(cleanAvatar);
     const gotRealWeChatProfile = hasRealNick || hasRealAvatar;
 
     if (fromLobbyReauth) {
       if (!userInfo) {
-        showToast('已取消微信授权，继续使用当前雅号');
+        if (isPrivacyError) {
+          showToast('需先在微信公众平台配置隐私指引（昵称与头像）');
+          this.onChange();
+          return;
+        }
+        this.promptOpenWeChatSettings();
+        this.onChange();
         return;
       }
       if (!gotRealWeChatProfile) {
         showToast('微信返回默认资料，保留当前专属雅号');
+        this.onChange();
         return;
       }
 
-      this.state.authBusy = true;
-      this.onChange();
-      try {
-        const auth = await updateCloudProfile({
-          nickName: hasRealNick ? rawNick : undefined,
-          avatarUrl: hasRealAvatar ? rawAvatar : undefined,
-          authStatus: 'AUTHORIZED',
-        });
-        this.state.player = auth.player;
-        if (this.state.connStatus === 'CONNECTED') {
-          this.send({
-            type: 'profile:update',
-            nickname: auth.player.nickname,
-            avatarUrl: auth.player.avatarUrl,
-          });
-        }
-        showToast('已同步微信头像与昵称', 'success');
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : '同步微信资料失败');
-      } finally {
-        this.state.authBusy = false;
-        this.onChange();
-      }
+      await this.syncLobbyWeChatProfile(
+        hasRealNick ? rawNick : undefined,
+        hasRealAvatar ? cleanAvatar : undefined
+      );
       return;
     }
 
     if (!userInfo) {
-      showToast('已为你分配专属雅号，大厅可随时重新授权');
+      showToast(
+        isPrivacyError
+          ? '未配置微信隐私指引，已先用专属雅号进入'
+          : '已为你分配专属雅号，大厅可随时重新授权'
+      );
       this.connect({ authStatus: 'GUEST_ALIAS' });
       return;
     }
@@ -191,9 +188,112 @@ export class MiniGameOnlineClient {
 
     this.connect({
       nickName: hasRealNick ? rawNick : undefined,
-      avatarUrl: hasRealAvatar ? rawAvatar : undefined,
+      avatarUrl: hasRealAvatar ? cleanAvatar : undefined,
       authStatus: 'AUTHORIZED',
     });
+  }
+
+  private async syncLobbyWeChatProfile(
+    nickName: string | undefined,
+    avatarUrl: string | undefined
+  ): Promise<void> {
+    this.state.authBusy = true;
+    this.onChange();
+    try {
+      const auth = await updateCloudProfile({
+        nickName,
+        avatarUrl,
+        authStatus: 'AUTHORIZED',
+      });
+      const cloudReturnedAvatar = Boolean(auth.player.avatarUrl);
+      this.state.player = {
+        ...auth.player,
+        avatarUrl: auth.player.avatarUrl || avatarUrl || undefined,
+        authStatus:
+          auth.player.authStatus === 'AUTHORIZED' || Boolean(avatarUrl)
+            ? 'AUTHORIZED'
+            : 'GUEST_ALIAS',
+      };
+      if (this.state.connStatus === 'CONNECTED') {
+        this.send({
+          type: 'profile:update',
+          nickname: this.state.player.nickname,
+          avatarUrl: this.state.player.avatarUrl,
+        });
+      }
+      if (avatarUrl && !cloudReturnedAvatar) {
+        showToast('头像已临时显示，请重新上传部署 authLogin 云函数');
+      } else {
+        showToast('已同步微信头像与昵称', 'success');
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '同步微信资料失败');
+    } finally {
+      this.state.authBusy = false;
+      this.onChange();
+    }
+  }
+
+  private promptOpenWeChatSettings(): void {
+    if (typeof wx.openSetting !== 'function') {
+      showToast('已取消微信授权，继续使用当前雅号');
+      return;
+    }
+    try {
+      wx.showModal({
+        title: '开启微信头像与昵称权限',
+        content: '如之前拒绝过授权，请前往设置页打开「用户信息」开关后再同步头像。',
+        confirmText: '去开启',
+        cancelText: '暂不',
+        success: (m) => {
+          if (!m.confirm) return;
+          wx.openSetting!({
+            success: async (res) => {
+              if (!res?.authSetting?.['scope.userInfo']) {
+                showToast('尚未开启用户信息权限');
+                this.onChange();
+                return;
+              }
+              const check = await fetchExistingWeChatUserInfo();
+              const rawNick =
+                typeof check.userInfo?.nickName === 'string' ? check.userInfo.nickName.trim() : '';
+              const cleanAvatar = normalizeWeChatAvatarUrl(check.userInfo?.avatarUrl);
+              const hasRealNick = rawNick.length > 0 && rawNick !== '微信用户';
+              if (hasRealNick || cleanAvatar) {
+                await this.syncLobbyWeChatProfile(
+                  hasRealNick ? rawNick : undefined,
+                  cleanAvatar || undefined
+                );
+              } else {
+                showToast('微信返回默认匿名资料，保留当前雅号');
+                this.onChange();
+              }
+            },
+            fail: () => {
+              showToast('打开授权设置失败，请在真机重试');
+              this.onChange();
+            },
+          });
+        },
+      });
+    } catch {
+      showToast('已取消微信授权，继续使用当前雅号');
+    }
+  }
+
+  public async handleFallbackAuthTap(fromLobbyReauth: boolean): Promise<void> {
+    if (this.state.authBusy) return;
+    const check = await fetchExistingWeChatUserInfo();
+    if (check.authorized && check.userInfo) {
+      await this.handleWeChatUserInfoTap({ userInfo: check.userInfo }, fromLobbyReauth);
+      return;
+    }
+    if (fromLobbyReauth) {
+      this.promptOpenWeChatSettings();
+      return;
+    }
+    showToast('当前环境未触发原生授权按钮，请用微信真机预览测试');
+    await this.handleWeChatUserInfoTap(null, false);
   }
 
   public enterAsGuestAlias(): void {
@@ -277,7 +377,15 @@ export class MiniGameOnlineClient {
       const auth = await loginWithWeChat(profile);
       if (!this.active || this.connectSeq !== attemptId) return;
       token = auth.token;
-      this.state.player = auth.player;
+      const fallbackAvatar = normalizeWeChatAvatarUrl(profile?.avatarUrl);
+      this.state.player = {
+        ...auth.player,
+        avatarUrl: auth.player.avatarUrl || fallbackAvatar || undefined,
+        authStatus:
+          auth.player.authStatus === 'AUTHORIZED' || Boolean(fallbackAvatar)
+            ? 'AUTHORIZED'
+            : 'GUEST_ALIAS',
+      };
     } catch (err) {
       if (!this.active || this.connectSeq !== attemptId) return;
       this.state.connStatus = 'ERROR';
@@ -376,7 +484,15 @@ export class MiniGameOnlineClient {
   private handleServerMessage(msg: ServerToClientMessage): void {
     switch (msg.type) {
       case 'auth:ok': {
-        this.state.player = msg.player;
+        this.state.player = {
+          ...this.state.player,
+          ...msg.player,
+          avatarUrl: msg.player.avatarUrl || this.state.player.avatarUrl,
+          authStatus:
+            msg.player.authStatus === 'AUTHORIZED' || this.state.player.authStatus === 'AUTHORIZED'
+              ? 'AUTHORIZED'
+              : 'GUEST_ALIAS',
+        };
         this.send({ type: 'lobby:subscribe' });
         const targetJoin = this.state.pendingRoomJoin || this.state.room?.roomId || null;
         if (targetJoin) {

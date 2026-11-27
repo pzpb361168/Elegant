@@ -114,6 +114,7 @@ export class MiniGameApp {
   private nativeAuthBtn: WxUserInfoButton | null = null;
   private nativeAuthTarget: { kind: 'AUTH_GATE' | 'LOBBY_REAUTH'; rect: Rect } | null = null;
   private pendingNativeAuthTarget: { kind: 'AUTH_GATE' | 'LOBBY_REAUTH'; rect: Rect } | null = null;
+  private lastNativeAuthTapAt = 0;
 
   constructor(onNeedRender: () => void) {
     this.onNeedRender = onNeedRender;
@@ -198,36 +199,41 @@ export class MiniGameApp {
       const top = Math.round(target.rect.y);
       const width = Math.round(target.rect.w);
       const height = Math.round(target.rect.h);
+      const isGate = target.kind === 'AUTH_GATE';
       const btn = wx.createUserInfoButton({
         type: 'text',
-        text: '',
+        text: isGate ? '微信授权登录' : '微信授权',
         lang: 'zh_CN',
         style: {
           left,
           top,
           width,
           height,
-          backgroundColor: 'rgba(0,0,0,0)',
-          borderColor: 'rgba(0,0,0,0)',
-          borderWidth: 0,
-          borderRadius: target.kind === 'AUTH_GATE' ? 10 : 6,
-          color: 'rgba(0,0,0,0)',
-          fontSize: 12,
+          backgroundColor: isGate ? PALETTE.cinnabar : PALETTE.white,
+          borderColor: PALETTE.cinnabar,
+          borderWidth: 1,
+          borderRadius: isGate ? 10 : 6,
+          color: isGate ? PALETTE.white : PALETTE.cinnabar,
+          fontSize: isGate ? 14 : 11,
           lineHeight: height,
           textAlign: 'center',
         },
       });
-      const isLobbyReauth = target.kind === 'LOBBY_REAUTH';
+      const isLobbyReauth = !isGate;
       btn.onTap((res) => {
+        this.lastNativeAuthTapAt = Date.now();
         this.destroyNativeAuthButton();
-        void this.online.handleWeChatUserInfoTap(res?.userInfo ?? null, isLobbyReauth);
+        void this.online.handleWeChatUserInfoTap(res ?? null, isLobbyReauth);
+        this.markDirty();
       });
+      btn.show();
       this.nativeAuthBtn = btn;
       this.nativeAuthTarget = {
         kind: target.kind,
         rect: { x: target.rect.x, y: target.rect.y, w: target.rect.w, h: target.rect.h },
       };
-    } catch {
+    } catch (err) {
+      console.warn('[auth] createUserInfoButton failed:', err);
       this.destroyNativeAuthButton();
     }
   }
@@ -1481,11 +1487,10 @@ export class MiniGameApp {
 
     if (!isBusy) {
       this.pendingNativeAuthTarget = { kind: 'AUTH_GATE', rect: primaryRect };
-      if (typeof wx.createUserInfoButton !== 'function') {
-        this.ui.addHit('ol-auth-wechat-fallback', primaryRect, () => {
-          void this.online.handleWeChatUserInfoTap(null, false);
-        });
-      }
+      this.ui.addHit('ol-auth-wechat-fallback', primaryRect, () => {
+        if (Date.now() - this.lastNativeAuthTapAt < 600) return;
+        void this.online.handleFallbackAuthTap(false);
+      });
     }
 
     const secondaryRect: Rect = { x: btnX, y: primaryY + 54, w: btnW, h: 38 };
@@ -1623,11 +1628,10 @@ export class MiniGameApp {
 
       if (!os.authBusy) {
         this.pendingNativeAuthTarget = { kind: 'LOBBY_REAUTH', rect: reauthRect };
-        if (typeof wx.createUserInfoButton !== 'function') {
-          this.ui.addHit('ol-reauth-fallback', reauthRect, () => {
-            void this.online.handleWeChatUserInfoTap(null, true);
-          });
-        }
+        this.ui.addHit('ol-reauth-fallback', reauthRect, () => {
+          if (Date.now() - this.lastNativeAuthTapAt < 600) return;
+          void this.online.handleFallbackAuthTap(true);
+        });
       }
     } else {
       drawEllipsisText(

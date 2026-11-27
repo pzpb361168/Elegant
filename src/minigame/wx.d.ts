@@ -130,6 +130,10 @@ export interface WxGlobal {
     success?: (res: { authSetting?: Record<string, boolean | undefined> }) => void;
     fail?: (err: unknown) => void;
   }): void;
+  openSetting?(opts: {
+    success?: (res: { authSetting?: Record<string, boolean | undefined> }) => void;
+    fail?: (err: unknown) => void;
+  }): void;
   getUserInfo?(opts: {
     withCredentials?: boolean;
     lang?: 'en' | 'zh_CN' | 'zh_TW';

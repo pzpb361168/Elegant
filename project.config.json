@@ -1,8 +1,8 @@
 {
   "miniprogramRoot": "dist/",
   "cloudfunctionRoot": "cloudfunctions/",
-  "projectname": "yayi-pavilion-minigame",
-  "description": "雅弈阁 — 五子棋 · 中国象棋 · 陆战军旗 微信小游戏",
+  "projectname": "雅弈阁-方寸之间",
+  "description": "雅弈阁-方寸之间 — 五子棋 · 中国象棋 · 陆战军旗 微信小游戏",
   "appid": "wx2079d48526fd71c9",
   "setting": {
     "urlCheck": false,

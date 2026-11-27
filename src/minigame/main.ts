@@ -98,12 +98,12 @@ function bootstrap(): void {
       const room = app.online.state.room;
       if (room) {
         return {
-          title: `${app.online.state.player.nickname} 邀你来雅弈阁对弈（房号 ${room.roomId}）`,
+          title: `${app.online.state.player.nickname} 邀你来雅弈阁-方寸之间对弈（房号 ${room.roomId}）`,
           query: `room=${room.roomId}`,
         };
       }
       return {
-        title: '雅弈阁 — 五子棋 · 中国象棋 · 陆战军旗',
+        title: '雅弈阁-方寸之间 — 五子棋 · 中国象棋 · 陆战军旗',
         query: '',
       };
     });

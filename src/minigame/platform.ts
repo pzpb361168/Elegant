@@ -195,7 +195,7 @@ export function setupWeChatPrivacyHandler(): void {
         wx.showModal({
           title: '用户隐私保护提示',
           content:
-            '在你使用雅弈阁联机对战服务前，请阅读并同意《用户隐私保护指引》。同意后，我们将仅在获取你明示授权后收集微信昵称与头像用于棋室席位展示。',
+            '在你使用雅弈阁-方寸之间联机对战服务前，请阅读并同意《用户隐私保护指引》。同意后，我们将仅在获取你明示授权后收集微信昵称与头像用于棋室席位展示。',
           confirmText: '同意',
           cancelText: '拒绝',
           success: (res) => {

@@ -418,29 +418,31 @@ export class MiniGameApp {
     ctx.lineTo(m.width, top + h + 4);
     ctx.stroke();
 
-    // Brand Title
-    drawEllipsisText(
-      ctx,
-      '雅弈阁',
-      12,
-      top + h / 2,
-      80,
-      PALETTE.woodDark,
-      '700 18px serif',
-      'left',
-      'middle'
-    );
-
     // Action buttons placed safely to the left of WeChat top-right capsule
     const rightLimit = Math.min(m.width - 10, m.capsuleLeft);
-    const btnH = 28;
+    const btnH = 26;
     const btnY = top + (h - btnH) / 2;
-    const btnW = 44;
-    const gap = 5;
+    const btnW = 38;
+    const gap = 4;
 
     const soundX = rightLimit - btnW;
     const rulesX = soundX - gap - btnW;
     const statsX = rulesX - gap - btnW;
+
+    // Brand Title (must match official registered Mini Game name "雅弈阁-方寸之间" without truncation)
+    const titleMaxW = Math.max(108, statsX - 14);
+    const titleFontSize = titleMaxW < 116 ? 13 : 15;
+    drawEllipsisText(
+      ctx,
+      '雅弈阁-方寸之间',
+      10,
+      top + h / 2,
+      titleMaxW,
+      PALETTE.woodDark,
+      `700 ${titleFontSize}px serif`,
+      'left',
+      'middle'
+    );
 
     drawButton(
       ctx,
@@ -1401,7 +1403,7 @@ export class MiniGameApp {
     cy += 42;
     drawEllipsisText(
       ctx,
-      '雅弈阁联机弈室',
+      '雅弈阁-方寸之间',
       cardX + cardW / 2,
       cy,
       cardW - 32,
@@ -1839,7 +1841,7 @@ export class MiniGameApp {
       () => {
         if (typeof wx.shareAppMessage === 'function') {
           wx.shareAppMessage({
-            title: `${os.player.nickname} 邀你来雅弈阁对弈（房号 ${room.roomId}）`,
+            title: `${os.player.nickname} 邀你来雅弈阁-方寸之间对弈（房号 ${room.roomId}）`,
             query: `room=${room.roomId}`,
           });
         } else {
